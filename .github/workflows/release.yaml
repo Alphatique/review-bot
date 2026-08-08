@@ -1,0 +1,26 @@
+name: release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  move-major-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: メジャータグを移動する
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          MAJOR="${TAG%%.*}"
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -f "$MAJOR" "$TAG"
+          git push -f origin "$MAJOR"
+          echo "moved $MAJOR -> $TAG"
