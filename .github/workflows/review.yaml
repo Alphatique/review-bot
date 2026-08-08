@@ -19,9 +19,12 @@ concurrency:
 
 jobs:
   review:
+    # fork PR の未検証コードを runner でビルド・実行しない。
+    # fork では GITHUB_TOKEN が read-only でレビューを投稿できず、そもそも成立しない。
     if: |
       github.event_name == 'workflow_dispatch'
-      || (github.event.pull_request.draft == false
+      || (github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.draft == false
       && !contains(github.event.pull_request.body, '[skip-review]'))
     runs-on: ubuntu-latest
     permissions:
@@ -39,7 +42,9 @@ jobs:
         with:
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           pr-number: ${{ inputs.pr-number }}
-          mode: ${{ inputs.mode || 'auto' }}
+          # 手動実行の既定は workflow_dispatch 側の full。
+          # pull_request では空になり action.yml の既定 auto が使われる。
+          mode: ${{ inputs.mode }}
           language: ja
           request-changes-on: major
           model: ${{ contains(github.event.pull_request.body, '[review-model:opus]') && 'claude-opus-5' || 'claude-sonnet-5' }}

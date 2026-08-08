@@ -25980,7 +25980,7 @@ async function runAgent(input) {
 			type: "text",
 			text: "Review received."
 		}] };
-	});
+	}, { alwaysLoad: true });
 	const server = createSdkMcpServer({
 		name: "review",
 		version: "1.0.0",

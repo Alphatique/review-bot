@@ -88,6 +88,9 @@ export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 			captured = args;
 			return { content: [{ type: 'text' as const, text: 'Review received.' }] };
 		},
+		// 既定では deferred tool になり、モデルが ToolSearch を経由しないと
+		// 呼べない。レビュー結果の報告経路はこれ 1 本なので常に見せる。
+		{ alwaysLoad: true },
 	);
 
 	const server = createSdkMcpServer({
