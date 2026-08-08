@@ -1,0 +1,52 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bunx oxlint --deny-warnings --format=github
+      - run: bunx oxfmt --check .
+      - run: bun run test
+      - run: bun run check:sdk-version
+
+  dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: dist が最新か確認する
+        run: |
+          if ! git diff --quiet -- dist/index.mjs; then
+            echo "::error::dist/index.mjs が古いです。'bun run build' を実行して結果をコミットしてください。"
+            git diff --stat -- dist/index.mjs
+            exit 1
+          fi
+          echo "dist is up to date"
+
+  runtime-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: runtime 依存が解決できるか確認する
+        working-directory: dist
+        run: npm ci --omit=dev --no-audit --no-fund
+      - name: ネイティブバイナリが配置されたか確認する
+        run: |
+          test -x dist/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude \
+            || { echo "::error::ネイティブバイナリが見つかりません"; exit 1; }
+          ls -la dist/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude
