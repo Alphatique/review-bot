@@ -1,0 +1,16 @@
+{
+	"compilerOptions": {
+		"target": "esnext",
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"lib": ["esnext"],
+		"types": ["bun"],
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"verbatimModuleSyntax": true,
+		"resolveJsonModule": true
+	},
+	"include": ["src", "tests", "scripts", "tsdown.config.ts"]
+}
