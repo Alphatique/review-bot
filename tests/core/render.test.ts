@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { KeyedFinding } from '../../src/core/dedupe';
-import { parseInlineMarker, SUMMARY_MARKER } from '../../src/core/marker';
+import {
+	FAILURE_MARKER,
+	parseInlineMarker,
+	SUMMARY_MARKER,
+} from '../../src/core/marker';
 import {
 	renderFailureSummary,
 	renderInlineComment,
@@ -107,6 +111,22 @@ describe('renderFailureSummary', () => {
 		const out = renderFailureSummary('timed out', 'ja');
 		expect(out).toContain('timed out');
 		expect(out).toContain(SUMMARY_MARKER);
+	});
+
+	test('失敗マーカーを含み、増分の起点にならないようにする', () => {
+		expect(renderFailureSummary('timed out', 'ja')).toContain(FAILURE_MARKER);
+	});
+
+	test('成功サマリには失敗マーカーを含めない', () => {
+		const out = renderSummary({
+			lang: 'ja',
+			posted: [],
+			unlocatable: [],
+			excludedFiles: [],
+			oversizedFiles: [],
+			mode: 'auto',
+		});
+		expect(out).not.toContain(FAILURE_MARKER);
 	});
 
 	test('エラー本文が空でも成立する', () => {

@@ -1,6 +1,6 @@
 import type { KeyedFinding } from './dedupe';
 import { type Language, messages } from './i18n';
-import { buildInlineMarker, SUMMARY_MARKER } from './marker';
+import { buildInlineMarker, FAILURE_MARKER, SUMMARY_MARKER } from './marker';
 import { SEVERITIES, SEVERITY_ORDER, type Severity } from './schema';
 
 const SEVERITY_EMOJI: Record<Severity, string> = {
@@ -90,6 +90,7 @@ export function renderFailureSummary(
 		'</details>',
 		'',
 		SUMMARY_MARKER,
+		FAILURE_MARKER,
 	].join('\n')}\n`;
 }
 

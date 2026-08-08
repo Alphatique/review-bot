@@ -4,6 +4,13 @@ import { SEVERITIES, type Severity } from './schema';
 /** レビュー本文がこの Action のものだと識別するマーカー。絶対に変更しない。 */
 export const SUMMARY_MARKER = '<!-- review-bot:v1 summary -->';
 
+/**
+ * レビューを完了できなかったときの通知に付けるマーカー。
+ * これが付いたレビューを「前回レビュー地点」に採用すると、失敗した範囲が
+ * 二度とレビューされないまま緑になるため、増分の起点から除外する。
+ */
+export const FAILURE_MARKER = '<!-- review-bot:v1 failure -->';
+
 const INLINE_MARKER_RE =
 	/<!--\s*review-bot:v1 key=([0-9a-f]{12}) sev=([a-z]+)\s*-->/g;
 
@@ -45,4 +52,8 @@ export function parseInlineMarker(
 
 export function hasSummaryMarker(body: string): boolean {
 	return body.includes(SUMMARY_MARKER);
+}
+
+export function hasFailureMarker(body: string): boolean {
+	return body.includes(FAILURE_MARKER);
 }
