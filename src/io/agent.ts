@@ -122,6 +122,11 @@ export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 
 	try {
 		for await (const message of session) {
+			if (message.type === 'assistant') {
+				for (const block of message.message.content) {
+					if (block.type === 'tool_use') input.log(`tool: ${block.name}`);
+				}
+			}
 			if (message.type === 'result') {
 				input.log(`agent result: ${JSON.stringify(message).slice(0, 500)}`);
 			}
