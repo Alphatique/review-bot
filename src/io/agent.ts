@@ -88,6 +88,9 @@ export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 			captured = args;
 			return { content: [{ type: 'text' as const, text: 'Review received.' }] };
 		},
+		// 既定では deferred tool になり、モデルが ToolSearch を経由しないと
+		// 呼べない。レビュー結果の報告経路はこれ 1 本なので常に見せる。
+		{ alwaysLoad: true },
 	);
 
 	const server = createSdkMcpServer({
@@ -122,6 +125,11 @@ export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 
 	try {
 		for await (const message of session) {
+			if (message.type === 'assistant') {
+				for (const block of message.message.content) {
+					if (block.type === 'tool_use') input.log(`tool: ${block.name}`);
+				}
+			}
 			if (message.type === 'result') {
 				input.log(`agent result: ${JSON.stringify(message).slice(0, 500)}`);
 			}

@@ -1,0 +1,52 @@
+name: review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: 'Pull request number to review'
+        required: true
+      mode:
+        description: 'auto or full'
+        required: false
+        default: 'full'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr-number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # fork PR の未検証コードを runner でビルド・実行しない。
+    # fork では GITHUB_TOKEN が read-only でレビューを投稿できず、そもそも成立しない。
+    if: |
+      github.event_name == 'workflow_dispatch'
+      || (github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.draft == false
+      && !contains(github.event.pull_request.body, '[skip-review]'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      # 自分自身を使うので、その PR のコードでビルドしてから実行する
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+
+      - uses: ./
+        with:
+          claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          pr-number: ${{ inputs.pr-number }}
+          # 手動実行の既定は workflow_dispatch 側の full。
+          # pull_request では空文字になる。with に明示的に渡すと action.yml の
+          # default は適用されないので、auto になるのは config.ts の pick() が
+          # 空文字を未設定として扱うため。
+          mode: ${{ inputs.mode }}
+          language: ja
+          request-changes-on: major
+          model: ${{ contains(github.event.pull_request.body, '[review-model:opus]') && 'claude-opus-5' || 'claude-sonnet-5' }}
