@@ -43,7 +43,9 @@ jobs:
           claude-code-oauth-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           pr-number: ${{ inputs.pr-number }}
           # 手動実行の既定は workflow_dispatch 側の full。
-          # pull_request では空になり action.yml の既定 auto が使われる。
+          # pull_request では空文字になる。with に明示的に渡すと action.yml の
+          # default は適用されないので、auto になるのは config.ts の pick() が
+          # 空文字を未設定として扱うため。
           mode: ${{ inputs.mode }}
           language: ja
           request-changes-on: major
