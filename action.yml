@@ -1,0 +1,127 @@
+name: 'AI Code Review'
+description: 'Review pull requests with Claude and post inline review comments'
+author: 'alphatique'
+
+inputs:
+  claude-code-oauth-token:
+    description: 'Claude subscription OAuth token. Either this or anthropic-api-key is required.'
+    required: false
+  anthropic-api-key:
+    description: 'Anthropic API key. Either this or claude-code-oauth-token is required.'
+    required: false
+  github-token:
+    description: 'Token used to read the pull request and post the review.'
+    required: false
+    default: ${{ github.token }}
+  repo:
+    description: 'owner/repo. Defaults to the current repository.'
+    required: false
+  pr-number:
+    description: 'Pull request number. Defaults to the number in the event payload.'
+    required: false
+  mode:
+    description: 'auto (review changes since the last review) or full (review the whole diff).'
+    required: false
+    default: 'auto'
+  instructions-file:
+    description: 'Path to a Markdown file describing what to review. Falls back to built-in defaults.'
+    required: false
+    default: '.github/review-instructions.md'
+  exclude:
+    description: 'Additional glob patterns to exclude, one per line. Appended to the built-in defaults.'
+    required: false
+  language:
+    description: 'Output language for findings and the summary (en or ja).'
+    required: false
+    default: 'en'
+  request-changes-on:
+    description: 'Submit the review as REQUEST_CHANGES when a finding at or above this severity exists (none, critical, major, minor).'
+    required: false
+    default: 'critical'
+  fail-on-error:
+    description: 'Fail the action when the review itself could not be completed.'
+    required: false
+    default: 'true'
+  fail-on-incomplete:
+    description: 'Fail the action when files were skipped because the diff exceeded the size limit.'
+    required: false
+    default: 'false'
+  model:
+    description: 'Claude model to use.'
+    required: false
+    default: 'claude-sonnet-5'
+  effort:
+    description: 'Reasoning effort (low, medium, high, xhigh, max).'
+    required: false
+    default: 'high'
+  max-retries:
+    description: 'How many times to retry when the agent fails to report findings.'
+    required: false
+    default: '3'
+  timeout-minutes:
+    description: 'Wall-clock timeout for a single agent run.'
+    required: false
+    default: '8'
+  max-cost-usd:
+    description: 'Budget ceiling for a single agent run.'
+    required: false
+    default: '5'
+  diff-max-bytes:
+    description: 'Maximum total diff size sent to the model.'
+    required: false
+    default: '500000'
+
+outputs:
+  status:
+    description: 'success or failed'
+    value: ${{ steps.review.outputs.status }}
+  review-event:
+    description: 'COMMENT, REQUEST_CHANGES, or NONE'
+    value: ${{ steps.review.outputs['review-event'] }}
+  findings-count:
+    description: 'Number of new findings posted'
+    value: ${{ steps.review.outputs['findings-count'] }}
+  critical-count:
+    description: 'Number of new critical findings'
+    value: ${{ steps.review.outputs['critical-count'] }}
+  major-count:
+    description: 'Number of new major findings'
+    value: ${{ steps.review.outputs['major-count'] }}
+  minor-count:
+    description: 'Number of new minor findings'
+    value: ${{ steps.review.outputs['minor-count'] }}
+  incomplete-files:
+    description: 'Number of files skipped because the diff exceeded the size limit'
+    value: ${{ steps.review.outputs['incomplete-files'] }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install runtime dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}/dist
+      run: npm ci --omit=dev --no-audit --no-fund
+
+    - name: Run review
+      id: review
+      shell: bash
+      run: node "$GITHUB_ACTION_PATH/dist/index.mjs"
+      env:
+        INPUT_CLAUDE-CODE-OAUTH-TOKEN: ${{ inputs.claude-code-oauth-token }}
+        INPUT_ANTHROPIC-API-KEY: ${{ inputs.anthropic-api-key }}
+        INPUT_GITHUB-TOKEN: ${{ inputs.github-token }}
+        INPUT_REPO: ${{ inputs.repo }}
+        INPUT_PR-NUMBER: ${{ inputs.pr-number }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_INSTRUCTIONS-FILE: ${{ inputs.instructions-file }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
+        INPUT_LANGUAGE: ${{ inputs.language }}
+        INPUT_REQUEST-CHANGES-ON: ${{ inputs.request-changes-on }}
+        INPUT_FAIL-ON-ERROR: ${{ inputs.fail-on-error }}
+        INPUT_FAIL-ON-INCOMPLETE: ${{ inputs.fail-on-incomplete }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_EFFORT: ${{ inputs.effort }}
+        INPUT_MAX-RETRIES: ${{ inputs.max-retries }}
+        INPUT_TIMEOUT-MINUTES: ${{ inputs.timeout-minutes }}
+        INPUT_MAX-COST-USD: ${{ inputs.max-cost-usd }}
+        INPUT_DIFF-MAX-BYTES: ${{ inputs.diff-max-bytes }}
