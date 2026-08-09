@@ -29,6 +29,7 @@ const EVENT_LABEL: Record<RunRecord['event'], string | null> = {
 /**
  * インラインコメント 1 件の本文。末尾にマーカーを埋め込む。
  * 本文はモデルが `language` に従って生成済みなので、ここでは固定文言を足さない。
+ * 1 行目の書式は parseInlineTitle が読むので変更しない。
  */
 export function renderInlineComment(
 	finding: KeyedFinding,
@@ -230,13 +231,29 @@ function renderStatusLine(
 	return parts.join(' · ');
 }
 
+/**
+ * タイトルはモデル出力で、差分の内容に影響される。sticky は編集され続ける
+ * 常設コメントなので、リンクラベルを閉じられたり、偽のマーカーを仕込まれたり
+ * すると壊れたまま残る。埋め込む直前に潰す。
+ * < と > を実体参照にするのは、表示を変えずに <!-- --> を成立させないため。
+ */
+function sanitizeTitle(title: string): string {
+	return title
+		.replace(/\s+/g, ' ')
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/([\\[\]])/g, String.raw`\$1`)
+		.trim();
+}
+
 function renderThreadLine(
 	thread: ThreadInfo,
 	unknownTitle: string,
 	outdatedSuffix: string,
 	strike = false,
 ): string {
-	const title = thread.title ?? unknownTitle;
+	const title = sanitizeTitle(thread.title ?? unknownTitle);
 	const link = `[${title}](${thread.url})`;
 	const where =
 		thread.line === null ? thread.file : `${thread.file}:${thread.line}`;

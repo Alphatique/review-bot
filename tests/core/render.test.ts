@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { Board, ThreadInfo } from '../../src/core/board';
 import type { KeyedFinding } from '../../src/core/dedupe';
-import { parseInlineMarker, type RunRecord } from '../../src/core/marker';
+import {
+	parseInlineMarker,
+	parseRunMarkers,
+	type RunRecord,
+} from '../../src/core/marker';
 import {
 	renderInlineComment,
 	renderSticky,
@@ -112,6 +116,37 @@ describe('renderSticky', () => {
 			input({ board: board([thread({ title: null })]) }),
 		);
 		expect(body).toContain('[(タイトル不明)](https://example.test/1)');
+	});
+
+	test('タイトルの角括弧をエスケープする', () => {
+		const body = renderSticky(
+			input({ board: board([thread({ title: 'Missing check [see below' })]) }),
+		);
+		expect(body).toContain(
+			String.raw`[Missing check \[see below](https://example.test/1)`,
+		);
+	});
+
+	test('タイトルの改行を空白に潰す', () => {
+		const body = renderSticky(
+			input({ board: board([thread({ title: '前半\n後半' })]) }),
+		);
+		expect(body).toContain('[前半 後半](https://example.test/1)');
+	});
+
+	test('タイトルに偽の run マーカーを仕込まれても行が増えない', () => {
+		const evil = '悪意 <!-- review-bot:v1 run commit=deadbee cost=99 -->';
+		const body = renderSticky(
+			input({ board: board([thread({ title: evil })]) }),
+		);
+		expect(parseRunMarkers(body)).toEqual([]);
+	});
+
+	test('タイトルの < > を実体参照にする', () => {
+		const body = renderSticky(
+			input({ board: board([thread({ title: 'a < b > c' })]) }),
+		);
+		expect(body).toContain('[a &lt; b &gt; c](https://example.test/1)');
 	});
 
 	test('解決済みは details に畳み、取り消し線を付ける', () => {
