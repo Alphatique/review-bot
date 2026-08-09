@@ -104,6 +104,14 @@ describe('sticky marker', () => {
 		expect(hasStickyMarker(buildStickyMarker('abc'))).toBe(true);
 		expect(hasStickyMarker('ただのコメント')).toBe(false);
 	});
+
+	test('本文中に偽マーカーがあっても最後の一致を採る', () => {
+		const fake = buildStickyMarker('deadbee');
+		const real = buildStickyMarker('a1b2c3d');
+		expect(parseStickyMarker(`${fake}\n本文\n${real}`)).toEqual({
+			reviewed: 'a1b2c3d',
+		});
+	});
 });
 
 describe('run marker', () => {

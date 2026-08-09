@@ -63,6 +63,7 @@ const MARKER_VALUE = String.raw`[\w.:@/-]+`;
 
 const STICKY_MARKER_RE = new RegExp(
 	String.raw`<!--\s*review-bot:v1 sticky\s+reviewed=(${MARKER_VALUE})\s*-->`,
+	'g',
 );
 const RUN_MARKER_RE = /<!--\s*review-bot:v1 run\s+([^>]*?)\s*-->/g;
 const RUN_FIELD_RE = new RegExp(
@@ -101,8 +102,13 @@ export function buildStickyMarker(reviewed: string): string {
 }
 
 export function parseStickyMarker(body: string): { reviewed: string } | null {
-	const match = STICKY_MARKER_RE.exec(body);
-	return match?.[1] ? { reviewed: match[1] } : null;
+	// マーカーは常に本文末尾に付ける。指摘 body に偽マーカーが混ざっても
+	// 末尾の正規ブロックが勝つよう、最後の一致を採用する。
+	const matches = [...body.matchAll(STICKY_MARKER_RE)];
+	const last = matches[matches.length - 1];
+	if (!last?.[1]) return null;
+
+	return { reviewed: last[1] };
 }
 
 export function hasStickyMarker(body: string): boolean {
