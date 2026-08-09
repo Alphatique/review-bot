@@ -118,7 +118,8 @@ export async function runReview(
 		runs: readonly RunRecord[];
 		board: Board;
 		latest: LatestRun | null;
-		failure: string | null;
+		/** 失敗したときのエラー本文と、レビューできなかった commit。成功時は null。 */
+		failure: { message: string; sha: string } | null;
 	}): Promise<void> => {
 		// findSticky に失敗していると既存コメントの id が分からない。ここで
 		// 新規作成すると sticky が二重になるので、何もせず記録だけ残す。
@@ -190,8 +191,10 @@ export async function runReview(
 			reviewedSha: lastReviewed ?? pr.baseSha,
 			runs,
 			board,
-			latest: latestRun(),
-			failure: error,
+			// attempts が 0 のままなら agent は一度も起動していない。それでも
+			// latestRun() を呼ぶと「コスト $0.00 で実行した」ように読めてしまう。
+			latest: attempts > 0 ? latestRun() : null,
+			failure: { message: error, sha: pr.headSha },
 		});
 
 		return {
@@ -321,11 +324,11 @@ export async function runReview(
 			});
 		}
 
-		// 投稿後に取り直す。サマリーは常に GitHub の現状から組み立てるため、
-		// このレビューが何も投稿していなくても（event === 'NONE' でも）取り直す。
-		// 新規コメントの URL を得る目的だけでなく、他の要因で状態が変わっている
-		// 可能性にも常に追従するため、event での分岐はしない。
-		const threads = await github.listThreads();
+		// 投稿後に取り直す。サマリーを常に GitHub の現状から組み立てるため。
+		// event が NONE なら createReview を呼んでいないので新しいスレッドは無く、
+		// existing がそのまま最新。ここで余計に叩くと、指摘ゼロの成功した実行が
+		// API の一時失敗だけで失敗扱いになる。
+		const threads = event === 'NONE' ? existing : await github.listThreads();
 		const runs = record(event, posted.length);
 
 		await writeSticky({

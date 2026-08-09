@@ -242,7 +242,9 @@ describe('renderSticky', () => {
 	});
 
 	test('失敗バナーを先頭に出す', () => {
-		const body = renderSticky(input({ failure: 'agent timed out' }));
+		const body = renderSticky(
+			input({ failure: { message: 'agent timed out', sha: 'a1b2c3d' } }),
+		);
 		expect(body).toContain('自動レビューを完了できませんでした');
 		expect(body).toContain('agent timed out');
 		expect(body.indexOf('⚠️')).toBeLessThan(body.indexOf('までレビュー済み'));
@@ -250,9 +252,23 @@ describe('renderSticky', () => {
 
 	test('失敗バナーの中でも board は通常どおり描く', () => {
 		const body = renderSticky(
-			input({ failure: 'boom', board: board([thread()]) }),
+			input({
+				failure: { message: 'boom', sha: 'a1b2c3d' },
+				board: board([thread()]),
+			}),
 		);
 		expect(body).toContain('### 未解決の指摘');
+	});
+
+	test('失敗バナーは未レビューの commit を名指しする', () => {
+		const body = renderSticky(
+			input({
+				reviewedSha: 'a1b2c3d',
+				failure: { message: 'boom', sha: 'def4567' },
+			}),
+		);
+		expect(body).toContain('`def4567`');
+		expect(body).toContain('`a1b2c3d` までレビュー済み');
 	});
 
 	test('oversized 警告を出す', () => {

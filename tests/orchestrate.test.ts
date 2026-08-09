@@ -570,6 +570,13 @@ describe('runReview', () => {
 
 	test('board の再取得結果を sticky に描く', async () => {
 		const { deps, stickyWrites } = setup({
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ line: 2 })],
+					metrics: { costUsd: 0, durationMs: 0 },
+				},
+			],
 			threadsAfterReview: [
 				{
 					key: 'b'.repeat(12),

@@ -46,8 +46,8 @@ export interface StickyInput {
 	reviewedSha: string;
 	/** 実行情報セクションに出す最新実行。差分ゼロで終わった回は null。 */
 	latest: LatestRun | null;
-	/** 失敗したときのエラー本文。成功時は null。 */
-	failure: string | null;
+	/** 失敗したときのエラー本文と、レビューできなかった commit。成功時は null。 */
+	failure: { message: string; sha: string } | null;
 	oversizedFiles: readonly string[];
 }
 
@@ -57,12 +57,14 @@ export function renderSticky(input: StickyInput): string {
 
 	if (input.failure !== null) {
 		lines.push(
-			m.failureBanner(input.reviewedSha),
+			// reviewedSha は「最後に成功したレビュー地点」であり、今回失敗した
+			// commit ではない。バナーは今回未レビューになった commit を名指しする。
+			m.failureBanner(input.failure.sha),
 			'>',
 			`> <details><summary>${m.errorDetails}</summary>`,
 			'>',
 			'> ```',
-			...(input.failure.trim() || '(no details)')
+			...(input.failure.message.trim() || '(no details)')
 				.split('\n')
 				.map(line => `> ${line}`),
 			'> ```',
