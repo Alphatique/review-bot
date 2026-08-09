@@ -23769,7 +23769,7 @@ const REQUEST_CHANGES_ON_VALUES = [
 function decideEvent(input) {
 	const unresolved = input.existing.filter((e) => !e.isResolved);
 	const outstandingAfter = unresolved.length + input.newFindings.length;
-	if (input.approve && input.canSubmitVerdict && outstandingAfter === 0 && input.currentVerdict !== "APPROVED") return "APPROVE";
+	if (input.approve && input.canSubmitVerdict && outstandingAfter === 0 && input.currentVerdict !== "APPROVED" && !input.hasDiscardedFindings) return "APPROVE";
 	if (input.threshold !== "none" && input.canSubmitVerdict) {
 		const threshold = input.threshold;
 		const hasNew = input.newFindings.some((f) => isAtLeastAsSevere(f.severity, threshold));
@@ -25783,6 +25783,19 @@ function collectCommentableLines(chunkText) {
 //#endregion
 //#region src/core/i18n.ts
 const LANGUAGES = ["en", "ja"];
+/**
+* attempts === 1 なら何回試したかは自明なので付けない。attempts > 1 のとき、
+* 成功したのか（succeeded）失敗したのかで意味が逆になる。「3 回目で成功」を
+* 失敗した実行に出すと、直後の失敗バナーと矛盾したまま読める。
+*/
+function attemptSuffixEn(latest) {
+	if (latest.attempts <= 1) return "";
+	return latest.succeeded ? ` (succeeded on attempt ${latest.attempts})` : ` (${latest.attempts} attempts)`;
+}
+function attemptSuffixJa(latest) {
+	if (latest.attempts <= 1) return "";
+	return latest.succeeded ? `（${latest.attempts} 回目で成功）` : `（${latest.attempts} 回試行）`;
+}
 const EN = {
 	heading: "## 🤖 Code Review",
 	reviewedUpTo: (sha) => `Reviewed up to \`${sha}\``,
@@ -25802,7 +25815,7 @@ const EN = {
 	modeFull: "full",
 	eventFailed: "⚠️ failed",
 	runInfoSummary: "Run details",
-	runInfoLine: (latest) => `This run: \`${latest.model}\` · effort \`${latest.effort}\` · ${latest.seconds}s · $${latest.costUsd.toFixed(2)}${latest.attempts > 1 ? ` (succeeded on attempt ${latest.attempts})` : ""}`,
+	runInfoLine: (latest) => `This run: \`${latest.model}\` · effort \`${latest.effort}\` · ${latest.seconds}s · $${latest.costUsd.toFixed(2)}${attemptSuffixEn(latest)}`,
 	failureBanner: (sha) => `> ⚠️ The automated review could not be completed. \`${sha}\` has **not** been reviewed. Re-run the workflow or check the job logs.`,
 	outdatedSuffix: "(outdated)",
 	unknownTitle: "(title unavailable)",
@@ -25830,7 +25843,7 @@ const JA = {
 	modeFull: "全体",
 	eventFailed: "⚠️ 失敗",
 	runInfoSummary: "実行情報",
-	runInfoLine: (latest) => `今回: \`${latest.model}\` · effort \`${latest.effort}\` · ${latest.seconds}s · $${latest.costUsd.toFixed(2)}${latest.attempts > 1 ? `（${latest.attempts} 回目で成功）` : ""}`,
+	runInfoLine: (latest) => `今回: \`${latest.model}\` · effort \`${latest.effort}\` · ${latest.seconds}s · $${latest.costUsd.toFixed(2)}${attemptSuffixJa(latest)}`,
 	failureBanner: (sha) => `> ⚠️ 自動レビューを完了できませんでした。\`${sha}\` は未レビューです。ワークフローを再実行するか、ジョブのログを確認してください。`,
 	outdatedSuffix: "(outdated)",
 	unknownTitle: "(タイトル不明)",
@@ -26242,14 +26255,23 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
 		}
 	}
 }`;
+/**
+* Octokit のエラーは REST の失敗時 `status` に HTTP ステータスコードを持つ。
+* GITHUB_TOKEN（インストールトークン）で getAuthenticated を叩いたときに
+* 返るのがこの形に限られる。
+*/
+function isNotFoundOrForbidden(error) {
+	const status = error?.status;
+	return status === 403 || status === 404;
+}
 function createGitHubClient(options) {
 	const octokit = (0, import_github.getOctokit)(options.token);
 	const { owner, repo, prNumber } = options;
 	/**
 	* このトークンが名乗る identity。sticky を騙るコメントを他人が投稿できると
 	* reviewed を head まで進められてレビューを丸ごとスキップさせられるため、
-	* 作成者を必ず確認する。GITHUB_TOKEN では getAuthenticated が 403 になるので
-	* その場合は Bot 判定にフォールバックする。
+	* 作成者を必ず確認する。GITHUB_TOKEN では getAuthenticated が 403/404 に
+	* なるので、その場合だけ Bot 判定にフォールバックする。
 	*/
 	let selfLogin;
 	const resolveSelfLogin = async () => {
@@ -26258,6 +26280,7 @@ function createGitHubClient(options) {
 			const { data } = await octokit.rest.users.getAuthenticated();
 			selfLogin = data.login;
 		} catch (error) {
+			if (!isNotFoundOrForbidden(error)) throw error;
 			options.log(`could not resolve the token identity, falling back to bot detection: ${error instanceof Error ? error.message : String(error)}`);
 			selfLogin = null;
 		}
@@ -26518,6 +26541,14 @@ const SEVERITY_EMOJI = {
 	major: "🟠",
 	minor: "🟡"
 };
+/**
+* 表示専用の短縮。マーカーの reviewed= / commit= は state そのものなので
+* ここでは触らない — 短縮した値を書いてしまうと getDiff の呼び出しに
+* 使う commit が変わってしまう。
+*/
+function shortSha(sha) {
+	return sha.slice(0, 7);
+}
 const EVENT_LABEL = {
 	COMMENT: "💬 COMMENT",
 	REQUEST_CHANGES: "🔴 REQUEST_CHANGES",
@@ -26538,9 +26569,9 @@ function renderInlineComment(finding, _lang) {
 function renderSticky(input) {
 	const m = messages(input.lang);
 	const lines = [m.heading, ""];
-	if (input.failure !== null) lines.push(m.failureBanner(input.failure.sha), ">", `> <details><summary>${m.errorDetails}</summary>`, ">", "> ```", ...(input.failure.message.trim() || "(no details)").split("\n").map((line) => `> ${line}`), "> ```", ">", "> </details>", "");
-	if (input.oversizedFiles.length > 0) lines.push(m.oversizedWarning(input.oversizedFiles), "");
-	if (input.droppedFiles.length > 0) lines.push(m.droppedWarning(input.droppedFiles), "");
+	if (input.failure !== null) lines.push(m.failureBanner(input.failure.sha), ">", `> <details><summary>${m.errorDetails}</summary>`, ">", "> ```", ...(sanitizeFenced(input.failure.message).trim() || "(no details)").split("\n").map((line) => `> ${line}`), "> ```", ">", "> </details>", "");
+	if (input.oversizedFiles.length > 0) lines.push(m.oversizedWarning(input.oversizedFiles.map(sanitizeInline)), "");
+	if (input.droppedFiles.length > 0) lines.push(m.droppedWarning(input.droppedFiles.map(sanitizeInline)), "");
 	lines.push(renderStatusLine(input, m), "");
 	if (input.board.outstanding.length > 0) {
 		lines.push(m.outstandingHeading, "");
@@ -26559,7 +26590,7 @@ function renderSticky(input) {
 	return `${lines.join("\n").trimEnd()}\n`;
 }
 function renderStatusLine(input, m) {
-	const parts = [m.reviewedUpTo(input.reviewedSha)];
+	const parts = [m.reviewedUpTo(shortSha(input.reviewedSha))];
 	const total = input.board.outstanding.length;
 	if (total === 0) {
 		parts.push(m.noOutstanding);
@@ -26571,13 +26602,29 @@ function renderStatusLine(input, m) {
 	return parts.join(" · ");
 }
 /**
+* sticky に埋め込む前に潰す。sticky は状態ストアそのものなので、ここに来る
+* 文字列は「表示テキスト」ではなく「シリアライズ形式への入力」として扱う。
+* < と > を実体参照にするのは、表示を変えずに <!-- --> を成立させないため。
+* バックティックはコードスパンを閉じられるので潰す。
+*/
+function sanitizeInline(value) {
+	return value.replace(/\s+/g, " ").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/`/g, "'").trim();
+}
+/**
+* フェンス内に出すテキスト。改行は情報なので保つ。マーカーは <!-- が
+* 成立しなければ作れないので < だけを潰し、フェンス自体を閉じられないようにする。
+*/
+function sanitizeFenced(value) {
+	return value.replace(/</g, "&lt;").replace(/```/g, "'''");
+}
+/**
 * タイトルはモデル出力で、差分の内容に影響される。sticky は編集され続ける
 * 常設コメントなので、リンクラベルを閉じられたり、偽のマーカーを仕込まれたり
-* すると壊れたまま残る。埋め込む直前に潰す。
-* < と > を実体参照にするのは、表示を変えずに <!-- --> を成立させないため。
+* すると壊れたまま残る。埋め込む直前に潰す。角括弧はリンクラベルの中でのみ
+* 問題になるので、共通の sanitizeInline とは別にここでだけエスケープする。
 */
 function sanitizeTitle(title) {
-	return title.replace(/\s+/g, " ").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/([\\[\]])/g, String.raw`\$1`).trim();
+	return sanitizeInline(title).replace(/([\\[\]])/g, String.raw`\$1`);
 }
 function renderThreadLine(thread, unknownTitle, outdatedSuffix, strike = false) {
 	const link = `[${sanitizeTitle(thread.title ?? unknownTitle)}](${thread.url})`;
@@ -26591,7 +26638,7 @@ function renderHistory(runs, m) {
 		const range = run.mode === "full" ? m.modeFull : m.modeIncremental;
 		const verdict = run.event === "FAILED" ? m.eventFailed : EVENT_LABEL[run.event] ?? "—";
 		const newCount = run.event === "FAILED" || run.event === "NONE" ? "—" : String(run.newFindings);
-		return `| \`${run.commit}\` | ${range} | ${newCount} | ${verdict} | $${run.costUsd.toFixed(2)} |`;
+		return `| \`${shortSha(run.commit)}\` | ${range} | ${newCount} | ${verdict} | $${run.costUsd.toFixed(2)} |`;
 	});
 	return [
 		`<details><summary>${m.historySummary(runs.length, total)}</summary>`,
@@ -26674,12 +26721,13 @@ async function runReview(deps, config) {
 			log(`could not update the summary comment: ${describe(error)}`);
 		}
 	};
-	const latestRun = () => ({
+	const latestRun = (succeeded) => ({
 		model: config.model,
 		effort: config.effort,
 		seconds: Math.round(spent.durationMs / 1e3),
 		costUsd: spent.costUsd,
-		attempts: Math.max(attempts, 1)
+		attempts: Math.max(attempts, 1),
+		succeeded
 	});
 	const record = (event, newFindings) => [...previousRuns, {
 		commit: pr.headSha,
@@ -26712,7 +26760,7 @@ async function runReview(deps, config) {
 			reviewedSha: lastReviewed ?? pr.baseSha,
 			runs,
 			board,
-			latest: attempts > 0 ? latestRun() : null,
+			latest: attempts > 0 ? latestRun(false) : null,
 			failure: {
 				message: error,
 				sha: pr.headSha
@@ -26823,7 +26871,8 @@ async function runReview(deps, config) {
 			threshold: config.requestChangesOn,
 			canSubmitVerdict,
 			approve: config.approve,
-			currentVerdict
+			currentVerdict,
+			hasDiscardedFindings: droppedFiles.size > 0
 		});
 		if (event !== "NONE") await github.createReview({
 			body: messages(config.language).reviewPointer,
@@ -26831,13 +26880,18 @@ async function runReview(deps, config) {
 			commitId: pr.headSha,
 			comments
 		});
-		const threads = event === "NONE" ? existing : await github.listThreads();
+		let threads = existing;
+		if (comments.length > 0) try {
+			threads = await github.listThreads();
+		} catch (error) {
+			log(`could not refresh review threads: ${describe(error)}`);
+		}
 		const runs = record(event, posted.length);
 		await writeSticky({
 			reviewedSha: pr.headSha,
 			runs,
 			board: buildBoard(threads),
-			latest: latestRun(),
+			latest: latestRun(true),
 			failure: null,
 			droppedFiles: [...droppedFiles]
 		});
