@@ -80,6 +80,8 @@ interface FakeOptions {
 	threadsError?: Error;
 	/** getOwnVerdict が返す値。未指定なら null（自分の判定が生きていない）。 */
 	ownVerdict?: OwnVerdict | null;
+	/** getOwnVerdict を失敗させて、abort() 側の個別 catch を試す。 */
+	verdictError?: Error;
 }
 
 function setup(options: FakeOptions = {}) {
@@ -126,7 +128,10 @@ function setup(options: FakeOptions = {}) {
 		createReview: async input => {
 			reviews.push(input);
 		},
-		getOwnVerdict: async () => options.ownVerdict ?? null,
+		getOwnVerdict: async () => {
+			if (options.verdictError) throw options.verdictError;
+			return options.ownVerdict ?? null;
+		},
 		dismissReview: async (_reviewId, message) => {
 			if (options.dismissError) throw options.dismissError;
 			dismissals.push(message);
@@ -510,6 +515,21 @@ describe('runReview', () => {
 		const { deps, stickyWrites } = setup({
 			outcomes: [boom, boom, boom],
 			threadsError: new Error('502'),
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(result.status).toBe('failed');
+		expect(stickyWrites[0]!.body).toContain('boom');
+	});
+
+	test('判定の取得が失敗してもバナーは書かれる', async () => {
+		const boom = {
+			ok: false as const,
+			error: 'boom',
+			metrics: { costUsd: 0, durationMs: 0 },
+		};
+		const { deps, stickyWrites } = setup({
+			outcomes: [boom, boom, boom],
+			verdictError: new Error('403'),
 		});
 		const result = await runReview(deps, CONFIG);
 		expect(result.status).toBe('failed');

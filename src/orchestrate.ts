@@ -1,6 +1,10 @@
 import type { Config } from './config';
 import { buildBoard, type Board } from './core/board';
-import { decideEvent, type EventDecision } from './core/decision';
+import {
+	decideEvent,
+	type EventDecision,
+	type OwnVerdictState,
+} from './core/decision';
 import { dedupe, type KeyedFinding } from './core/dedupe';
 import { analyzeDiff, isCommentable } from './core/diff';
 import { messages, type LatestRun } from './core/i18n';
@@ -293,9 +297,22 @@ export async function runReview(
 		if (!outcome.ok) return await abort(outcome.error);
 
 		const existing = await github.listThreads();
-		// decideEvent が「既に自分の CHANGES_REQUESTED が生きているか」を
-		// 判断できるよう、ここで一度だけ取っておく。
-		const ownVerdict = await github.getOwnVerdict();
+
+		const canSubmitVerdict = !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX);
+
+		// 判定は threshold と作者の条件を満たすときしか使わない。使わない実行で
+		// listReviews を叩くと、無関係な API 障害で成功した実行を落としかねない。
+		let currentVerdict: OwnVerdictState | null = null;
+		if (config.requestChangesOn !== 'none' && canSubmitVerdict) {
+			try {
+				currentVerdict = (await github.getOwnVerdict())?.state ?? null;
+			} catch (error) {
+				// 取れなければ「判定は無い」とみなす。再表明が 1 回増えるだけで、
+				// 成功した実行を丸ごと落とすよりずっと軽い。
+				log(`could not read the current verdict: ${describe(error)}`);
+			}
+		}
+
 		const { toPost } = dedupe(outcome.findings, existing);
 
 		const comments: InlineCommentInput[] = [];
@@ -327,9 +344,9 @@ export async function runReview(
 			newFindings: posted,
 			existing,
 			threshold: config.requestChangesOn,
-			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
+			canSubmitVerdict,
 			approve: config.approve,
-			currentVerdict: ownVerdict?.state ?? null,
+			currentVerdict,
 		});
 
 		if (event !== 'NONE') {

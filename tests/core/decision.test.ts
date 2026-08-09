@@ -158,4 +158,16 @@ describe('decideEvent', () => {
 			),
 		).toBe('REQUEST_CHANGES');
 	});
+
+	test('既に CHANGES_REQUESTED でも閾値未満の新規指摘は COMMENT で出す', () => {
+		expect(
+			decideEvent(
+				input({
+					newFindings: [severity('minor')],
+					existing: [existing('critical', false)],
+					currentVerdict: 'CHANGES_REQUESTED',
+				}),
+			),
+		).toBe('COMMENT');
+	});
 });

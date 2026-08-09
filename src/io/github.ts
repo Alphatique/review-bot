@@ -298,10 +298,12 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 				// する。
 				if (!isOwnComment(review.user, login)) continue;
 				if (!hasReviewMarker(review.body ?? '')) continue;
-				// APPROVED / CHANGES_REQUESTED 以外は「最新の判定」を左右しない。
-				// COMMENTED は GitHub 側で判定を上書きしないし、PENDING（書きかけの
-				// Review）もまだ提出されていないので同様に無視できる。許可リスト
-				// にして読み飛ばす。
+				// dismiss された判定より古いものを掘り出してはいけない。GitHub 上では
+				// この時点でレビュアーの判定は無効になっており、生きている判定は無い。
+				// （読み飛ばして続行すると、dismiss で意図的に外したはずの古い
+				// CHANGES_REQUESTED を「生きている」と誤認する。）
+				if (review.state === 'DISMISSED') return null;
+				// COMMENTED / PENDING は判定を上書きしないので読み飛ばす。
 				if (
 					review.state !== 'APPROVED' &&
 					review.state !== 'CHANGES_REQUESTED'
