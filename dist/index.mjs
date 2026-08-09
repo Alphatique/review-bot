@@ -23766,6 +23766,8 @@ const REQUEST_CHANGES_ON_VALUES = [
 	"major",
 	"minor"
 ];
+/** GitHub 上で生きている（dismiss されていない）自分の Review の判定。 */
+const OWN_VERDICT_STATES = ["APPROVED", "CHANGES_REQUESTED"];
 function decideEvent(input) {
 	const unresolved = input.existing.filter((e) => !e.isResolved);
 	const outstandingAfter = unresolved.length + input.newFindings.length;
@@ -26182,6 +26184,7 @@ function buildRunMarker(run) {
 		`commit=${run.commit}`,
 		`mode=${run.mode}`,
 		`new=${run.newFindings}`,
+		`dropped=${run.droppedFindings}`,
 		`event=${run.event}`,
 		`cost=${run.costUsd.toFixed(4)}`,
 		`sec=${Math.round(run.seconds)}`,
@@ -26206,6 +26209,7 @@ function parseRunMarkers(body) {
 			commit,
 			mode: fields.get("mode") === "full" ? "full" : "auto",
 			newFindings: toInt(fields.get("new"), 0),
+			droppedFindings: toInt(fields.get("dropped"), 0),
 			event: RUN_EVENTS.includes(event ?? "") ? event : "NONE",
 			costUsd: toNumber(fields.get("cost"), 0),
 			seconds: toInt(fields.get("sec"), 0),
@@ -26218,6 +26222,20 @@ function parseRunMarkers(body) {
 }
 function totalCostUsd(runs) {
 	return runs.reduce((sum, run) => sum + run.costUsd, 0);
+}
+/**
+* 過去に破棄した指摘のうち、まだ見直されていないものがあるか。
+*
+* 破棄はスレッドを作らないので、未解決件数が 0 になっても「何も無かった」の
+* ではなく「見なかったことにした」だけ。これを実行ごとのローカルな値のまま
+* にすると、次の push で false に戻って APPROVE が通ってしまう。
+*
+* 成功した `mode: full` の実行は PR 全体を見直しているので、それより前の
+* 破棄は引き継がない。その実行自身の破棄は見直した上で再び落ちているので数える。
+*/
+function hasUnreviewedDrops(runs) {
+	const lastFull = runs.findLastIndex((run) => run.mode === "full" && run.event !== "FAILED");
+	return runs.slice(Math.max(lastFull, 0)).some((run) => run.droppedFindings > 0);
 }
 /**
 * インラインコメント本文の 1 行目からタイトルを復元する。
@@ -26235,6 +26253,51 @@ function toNumber(value, fallback) {
 function toInt(value, fallback) {
 	const parsed = toNumber(value, fallback);
 	return Number.isInteger(parsed) ? parsed : fallback;
+}
+//#endregion
+//#region src/core/ownership.ts
+/**
+* この投稿が自分のものか。
+* login が null なのは GITHUB_TOKEN で identity を確定できなかった場合で、
+* そのときだけ Bot 判定にフォールバックする。
+*/
+function isOwnAuthor(user, login) {
+	return login === null ? user?.type === "Bot" : user?.login === login;
+}
+/**
+* Review 一覧から、GitHub 上で生きている自分の判定を選ぶ。
+* 新しい順に見て最初に見つかったものが現在の判定。
+*/
+function selectOwnVerdict(reviews, login) {
+	for (let i = reviews.length - 1; i >= 0; i -= 1) {
+		const review = reviews[i];
+		if (!isOwnAuthor(review.user, login)) continue;
+		if (!hasReviewMarker(review.body ?? "")) continue;
+		if (review.state === "DISMISSED") return null;
+		if (!OWN_VERDICT_STATES.includes(review.state)) continue;
+		return {
+			id: review.id,
+			state: review.state
+		};
+	}
+	return null;
+}
+/**
+* issue comment 一覧から、この Action の sticky を選ぶ。
+* sticky を騙るコメントを他人が投稿できると reviewed を head まで進められて
+* レビューを丸ごとスキップさせられるため、作成者を必ず確認する。
+*/
+function selectSticky(comments, login) {
+	for (const comment of comments) {
+		const body = comment.body ?? "";
+		if (!hasStickyMarker(body)) continue;
+		if (!isOwnAuthor(comment.user, login)) continue;
+		return {
+			commentId: comment.id,
+			body
+		};
+	}
+	return null;
 }
 //#endregion
 //#region src/io/github.ts
@@ -26286,7 +26349,6 @@ function createGitHubClient(options) {
 		}
 		return selfLogin;
 	};
-	const isOwnComment = (user, login) => login === null ? user?.type === "Bot" : user?.login === login;
 	return {
 		async getPullRequest() {
 			const { data } = await octokit.rest.pulls.get({
@@ -26345,22 +26407,12 @@ function createGitHubClient(options) {
 		},
 		async findSticky() {
 			const login = await resolveSelfLogin();
-			const comments = await octokit.paginate(octokit.rest.issues.listComments, {
+			return selectSticky(await octokit.paginate(octokit.rest.issues.listComments, {
 				owner,
 				repo,
 				issue_number: prNumber,
 				per_page: 100
-			});
-			for (const comment of comments) {
-				const body = comment.body ?? "";
-				if (!hasStickyMarker(body)) continue;
-				if (!isOwnComment(comment.user, login)) continue;
-				return {
-					commentId: comment.id,
-					body
-				};
-			}
-			return null;
+			}), login);
 		},
 		async upsertSticky({ commentId, body }) {
 			if (commentId === null) {
@@ -26412,24 +26464,12 @@ function createGitHubClient(options) {
 		},
 		async getOwnVerdict() {
 			const login = await resolveSelfLogin();
-			const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
+			return selectOwnVerdict(await octokit.paginate(octokit.rest.pulls.listReviews, {
 				owner,
 				repo,
 				pull_number: prNumber,
 				per_page: 100
-			});
-			for (let i = reviews.length - 1; i >= 0; i -= 1) {
-				const review = reviews[i];
-				if (!isOwnComment(review.user, login)) continue;
-				if (!hasReviewMarker(review.body ?? "")) continue;
-				if (review.state === "DISMISSED") return null;
-				if (review.state !== "APPROVED" && review.state !== "CHANGES_REQUESTED") continue;
-				return {
-					id: review.id,
-					state: review.state
-				};
-			}
-			return null;
+			}), login);
 		},
 		async dismissReview(reviewId, message) {
 			await octokit.rest.pulls.dismissReview({
@@ -26740,10 +26780,11 @@ async function runReview(deps, config) {
 		attempts: Math.max(attempts, 1),
 		succeeded
 	});
-	const record = (event, newFindings) => [...previousRuns, {
+	const record = (event, newFindings, droppedFindings = 0) => [...previousRuns, {
 		commit: pr.headSha,
 		mode: config.mode,
 		newFindings,
+		droppedFindings,
 		event,
 		costUsd: spent.costUsd,
 		seconds: Math.round(spent.durationMs / 1e3),
@@ -26883,7 +26924,7 @@ async function runReview(deps, config) {
 			canSubmitVerdict,
 			approve: config.approve,
 			currentVerdict,
-			hasDiscardedFindings: droppedFiles.size > 0
+			hasDiscardedFindings: droppedFiles.size > 0 || hasUnreviewedDrops(previousRuns)
 		});
 		if (event !== "NONE") await github.createReview({
 			body: messages(config.language).reviewPointer,
@@ -26897,7 +26938,7 @@ async function runReview(deps, config) {
 		} catch (error) {
 			log(`could not refresh review threads: ${describe(error)}`);
 		}
-		const runs = record(event, posted.length);
+		const runs = record(event, posted.length, droppedFiles.size);
 		await writeSticky({
 			reviewedSha: pr.headSha,
 			runs,

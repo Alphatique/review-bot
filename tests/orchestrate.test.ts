@@ -662,6 +662,7 @@ describe('runReview', () => {
 					commit: 'prev',
 					mode: 'auto',
 					newFindings: 2,
+					droppedFindings: 0,
 					event: 'COMMENT',
 					costUsd: 0.5,
 					seconds: 30,
@@ -722,6 +723,7 @@ describe('runReview', () => {
 					commit: 'prev',
 					mode: 'auto',
 					newFindings: 0,
+					droppedFindings: 0,
 					event: 'NONE',
 					costUsd: 0.5,
 					seconds: 10,
@@ -744,6 +746,69 @@ describe('runReview', () => {
 
 	test('approve が有効で未解決ゼロなら APPROVE を出す', async () => {
 		const { deps, reviews } = setup();
+		const result = await runReview(deps, { ...CONFIG, approve: true });
+		expect(result.event).toBe('APPROVE');
+		expect(reviews[0]!.event).toBe('APPROVE');
+	});
+
+	test('破棄した指摘を run マーカーに記録する', async () => {
+		const { deps, stickyWrites } = setup({
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ file: 'src/other.ts' })],
+					metrics: { costUsd: 0, durationMs: 0 },
+				},
+			],
+		});
+		await runReview(deps, CONFIG);
+		const runs = parseRunMarkers(stickyWrites[0]!.body);
+		expect(runs.at(-1)!.droppedFindings).toBe(1);
+	});
+
+	test('過去の実行で破棄していれば未解決ゼロでも APPROVE しない', async () => {
+		// 破棄した指摘はスレッドにならないので「未解決」として数えられない。
+		// 実行ごとのローカルな値のままだと、次の push で承認が通ってしまう。
+		const { deps, reviews } = setup({
+			sticky: {
+				commentId: 1,
+				body: `${buildStickyMarker('prev')}\n${buildRunMarker({
+					commit: 'prev',
+					mode: 'auto',
+					newFindings: 0,
+					droppedFindings: 1,
+					event: 'NONE',
+					costUsd: 0,
+					seconds: 0,
+					attempts: 1,
+					model: 'claude-sonnet-5',
+					effort: 'high',
+				})}`,
+			},
+		});
+		const result = await runReview(deps, { ...CONFIG, approve: true });
+		expect(reviews).toHaveLength(0);
+		expect(result.event).toBe('NONE');
+	});
+
+	test('mode: full で見直せば過去の破棄は APPROVE を止めない', async () => {
+		const { deps, reviews } = setup({
+			sticky: {
+				commentId: 1,
+				body: `${buildStickyMarker('prev')}\n${buildRunMarker({
+					commit: 'prev',
+					mode: 'full',
+					newFindings: 0,
+					droppedFindings: 0,
+					event: 'NONE',
+					costUsd: 0,
+					seconds: 0,
+					attempts: 1,
+					model: 'claude-sonnet-5',
+					effort: 'high',
+				})}`,
+			},
+		});
 		const result = await runReview(deps, { ...CONFIG, approve: true });
 		expect(result.event).toBe('APPROVE');
 		expect(reviews[0]!.event).toBe('APPROVE');

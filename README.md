@@ -232,6 +232,8 @@ Once this action submits `REQUEST_CHANGES`, nothing it does later dismisses it â
 
 Treating a resolved thread as "handled" is deliberate and matches GitHub's own "Require conversation resolution before merging". It is a convenience signal, not a review.
 
+If the model ever reports a finding against a file outside the diff, that finding is discarded â€” it has no thread to live in, so it can never be resolved and can never be counted as outstanding. The action records the discard and withholds `APPROVE` from then on, because zero outstanding findings would otherwise mean "nothing was left" when it really means "something was ignored". A successful `mode: full` re-review re-examines the whole diff and clears discards from before it.
+
 If the review fails after an approval was submitted, the action dismisses its own approval so the pull request does not stay green on a review that never ran.
 
 ## Fail-closed behaviour

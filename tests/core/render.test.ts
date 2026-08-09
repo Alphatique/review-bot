@@ -42,6 +42,7 @@ function run(overrides: Partial<RunRecord> = {}): RunRecord {
 		commit: 'a1b2c3d',
 		mode: 'auto',
 		newFindings: 1,
+		droppedFindings: 0,
 		event: 'COMMENT',
 		costUsd: 0.18,
 		seconds: 42,

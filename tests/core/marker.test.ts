@@ -5,6 +5,7 @@ import {
 	buildStickyMarker,
 	findingKey,
 	hasStickyMarker,
+	hasUnreviewedDrops,
 	parseInlineMarker,
 	parseInlineTitle,
 	parseRunMarkers,
@@ -95,6 +96,7 @@ describe('run marker', () => {
 		commit: 'a1b2c3d',
 		mode: 'auto',
 		newFindings: 1,
+		droppedFindings: 0,
 		event: 'COMMENT',
 		costUsd: 0.1817,
 		seconds: 42,
@@ -131,6 +133,7 @@ describe('run marker', () => {
 			commit: 'abc',
 			mode: 'auto',
 			newFindings: 0,
+			droppedFindings: 0,
 			event: 'NONE',
 			costUsd: 0,
 			seconds: 0,
@@ -167,6 +170,79 @@ describe('run marker', () => {
 	test('run マーカーが無ければ空配列', () => {
 		expect(parseRunMarkers('ただのコメント')).toEqual([]);
 		expect(totalCostUsd([])).toBe(0);
+	});
+
+	test('破棄件数を往復できる', () => {
+		const marker = buildRunMarker({ ...RUN, droppedFindings: 2 });
+		expect(parseRunMarkers(marker)[0]!.droppedFindings).toBe(2);
+	});
+
+	test('dropped を知らない古いマーカーは 0 として読む', () => {
+		const body =
+			'<!-- review-bot:v1 run commit=abc mode=auto new=1 event=COMMENT -->';
+		expect(parseRunMarkers(body)[0]!.droppedFindings).toBe(0);
+	});
+});
+
+describe('hasUnreviewedDrops', () => {
+	const RUN: RunRecord = {
+		commit: 'a1b2c3d',
+		mode: 'auto',
+		newFindings: 0,
+		droppedFindings: 0,
+		event: 'COMMENT',
+		costUsd: 0,
+		seconds: 0,
+		attempts: 1,
+		model: 'claude-sonnet-5',
+		effort: 'high',
+	};
+
+	test('履歴が無ければ false', () => {
+		expect(hasUnreviewedDrops([])).toBe(false);
+	});
+
+	test('破棄が一度も無ければ false', () => {
+		expect(hasUnreviewedDrops([RUN, { ...RUN, commit: 'b' }])).toBe(false);
+	});
+
+	test('過去の破棄は後続の実行に持ち越す', () => {
+		expect(
+			hasUnreviewedDrops([{ ...RUN, droppedFindings: 1 }, { ...RUN }]),
+		).toBe(true);
+	});
+
+	test('成功した mode: full より前の破棄は引き継がない', () => {
+		expect(
+			hasUnreviewedDrops([
+				{ ...RUN, droppedFindings: 1 },
+				{ ...RUN, mode: 'full' },
+			]),
+		).toBe(false);
+	});
+
+	test('mode: full 自身の破棄は数える', () => {
+		expect(
+			hasUnreviewedDrops([{ ...RUN, mode: 'full', droppedFindings: 1 }]),
+		).toBe(true);
+	});
+
+	test('失敗した mode: full は見直したことにならない', () => {
+		expect(
+			hasUnreviewedDrops([
+				{ ...RUN, droppedFindings: 1 },
+				{ ...RUN, mode: 'full', event: 'FAILED' },
+			]),
+		).toBe(true);
+	});
+
+	test('mode: full の後に起きた破棄は数える', () => {
+		expect(
+			hasUnreviewedDrops([
+				{ ...RUN, mode: 'full' },
+				{ ...RUN, droppedFindings: 1 },
+			]),
+		).toBe(true);
 	});
 });
 

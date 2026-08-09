@@ -81,6 +81,12 @@ export interface RunRecord {
 	commit: string;
 	mode: 'auto' | 'full';
 	newFindings: number;
+	/**
+	 * 差分外のファイルを狙っていたため破棄した指摘の数。
+	 * 破棄した指摘はスレッドにならないので「未解決」として数えられない。
+	 * 記録しておかないと、次の push で存在しなかったことになる。
+	 */
+	droppedFindings: number;
 	event: RunEvent;
 	/** 全 attempt の合計。 */
 	costUsd: number;
@@ -114,6 +120,7 @@ export function buildRunMarker(run: RunRecord): string {
 		`commit=${run.commit}`,
 		`mode=${run.mode}`,
 		`new=${run.newFindings}`,
+		`dropped=${run.droppedFindings}`,
 		`event=${run.event}`,
 		`cost=${run.costUsd.toFixed(4)}`,
 		`sec=${Math.round(run.seconds)}`,
@@ -146,6 +153,7 @@ export function parseRunMarkers(body: string): RunRecord[] {
 			commit,
 			mode: fields.get('mode') === 'full' ? 'full' : 'auto',
 			newFindings: toInt(fields.get('new'), 0),
+			droppedFindings: toInt(fields.get('dropped'), 0),
 			event: (RUN_EVENTS as readonly string[]).includes(event ?? '')
 				? (event as RunEvent)
 				: 'NONE',
@@ -162,6 +170,23 @@ export function parseRunMarkers(body: string): RunRecord[] {
 
 export function totalCostUsd(runs: readonly RunRecord[]): number {
 	return runs.reduce((sum, run) => sum + run.costUsd, 0);
+}
+
+/**
+ * 過去に破棄した指摘のうち、まだ見直されていないものがあるか。
+ *
+ * 破棄はスレッドを作らないので、未解決件数が 0 になっても「何も無かった」の
+ * ではなく「見なかったことにした」だけ。これを実行ごとのローカルな値のまま
+ * にすると、次の push で false に戻って APPROVE が通ってしまう。
+ *
+ * 成功した `mode: full` の実行は PR 全体を見直しているので、それより前の
+ * 破棄は引き継がない。その実行自身の破棄は見直した上で再び落ちているので数える。
+ */
+export function hasUnreviewedDrops(runs: readonly RunRecord[]): boolean {
+	const lastFull = runs.findLastIndex(
+		run => run.mode === 'full' && run.event !== 'FAILED',
+	);
+	return runs.slice(Math.max(lastFull, 0)).some(run => run.droppedFindings > 0);
 }
 
 /**

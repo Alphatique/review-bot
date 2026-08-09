@@ -15,7 +15,8 @@ export const REQUEST_CHANGES_ON_VALUES = [
 export type RequestChangesOn = (typeof REQUEST_CHANGES_ON_VALUES)[number];
 
 /** GitHub 上で生きている（dismiss されていない）自分の Review の判定。 */
-export type OwnVerdictState = 'APPROVED' | 'CHANGES_REQUESTED';
+export const OWN_VERDICT_STATES = ['APPROVED', 'CHANGES_REQUESTED'] as const;
+export type OwnVerdictState = (typeof OWN_VERDICT_STATES)[number];
 
 export interface DecisionInput {
 	/** 今回のレビューで新たに投稿する指摘。 */

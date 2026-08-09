@@ -2,12 +2,17 @@ import { getOctokit } from '@actions/github';
 import type { ThreadInfo } from '../core/board';
 import type { ReviewEvent } from '../core/decision';
 import {
-	hasReviewMarker,
-	hasStickyMarker,
 	parseInlineMarker,
 	parseInlineTitle,
 	REVIEW_MARKER,
 } from '../core/marker';
+import {
+	type OwnVerdict,
+	selectOwnVerdict,
+	selectSticky,
+} from '../core/ownership';
+
+export type { OwnVerdict };
 
 export interface PullRequestInfo {
 	baseSha: string;
@@ -31,11 +36,6 @@ export interface CreateReviewInput {
 	event: ReviewEvent;
 	commitId: string;
 	comments: readonly InlineCommentInput[];
-}
-
-export interface OwnVerdict {
-	id: number;
-	state: 'APPROVED' | 'CHANGES_REQUESTED';
 }
 
 export interface GitHubClient {
@@ -142,11 +142,6 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 		return selfLogin;
 	};
 
-	const isOwnComment = (
-		user: { login?: string; type?: string } | null | undefined,
-		login: string | null,
-	): boolean => (login === null ? user?.type === 'Bot' : user?.login === login);
-
 	return {
 		async getPullRequest() {
 			const { data } = await octokit.rest.pulls.get({
@@ -222,14 +217,7 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 					per_page: 100,
 				},
 			);
-
-			for (const comment of comments) {
-				const body = comment.body ?? '';
-				if (!hasStickyMarker(body)) continue;
-				if (!isOwnComment(comment.user, login)) continue;
-				return { commentId: comment.id, body };
-			}
-			return null;
+			return selectSticky(comments, login);
 		},
 
 		async upsertSticky({ commentId, body }) {
@@ -304,30 +292,7 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 				pull_number: prNumber,
 				per_page: 100,
 			});
-
-			for (let i = reviews.length - 1; i >= 0; i -= 1) {
-				const review = reviews[i]!;
-				// GITHUB_TOKEN では identity を確定できず Bot 判定に落ちるため、
-				// 投稿者判定だけでは他 App の Review と区別できない。マーカーとの
-				// AND で絞り、他 App の Review を誤って自分のものと扱わないように
-				// する。
-				if (!isOwnComment(review.user, login)) continue;
-				if (!hasReviewMarker(review.body ?? '')) continue;
-				// dismiss された判定より古いものを掘り出してはいけない。GitHub 上では
-				// この時点でレビュアーの判定は無効になっており、生きている判定は無い。
-				// （読み飛ばして続行すると、dismiss で意図的に外したはずの古い
-				// CHANGES_REQUESTED を「生きている」と誤認する。）
-				if (review.state === 'DISMISSED') return null;
-				// COMMENTED / PENDING は判定を上書きしないので読み飛ばす。
-				if (
-					review.state !== 'APPROVED' &&
-					review.state !== 'CHANGES_REQUESTED'
-				) {
-					continue;
-				}
-				return { id: review.id, state: review.state };
-			}
-			return null;
+			return selectOwnVerdict(reviews, login);
 		},
 
 		async dismissReview(reviewId, message) {

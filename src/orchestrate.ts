@@ -9,6 +9,7 @@ import { dedupe, type KeyedFinding } from './core/dedupe';
 import { analyzeDiff, isCommentable } from './core/diff';
 import { messages, type LatestRun } from './core/i18n';
 import {
+	hasUnreviewedDrops,
 	parseRunMarkers,
 	parseStickyMarker,
 	type RunRecord,
@@ -157,12 +158,14 @@ export async function runReview(
 	const record = (
 		event: RunRecord['event'],
 		newFindings: number,
+		droppedFindings = 0,
 	): RunRecord[] => [
 		...previousRuns,
 		{
 			commit: pr.headSha,
 			mode: config.mode,
 			newFindings,
+			droppedFindings,
 			event,
 			costUsd: spent.costUsd,
 			seconds: Math.round(spent.durationMs / 1000),
@@ -355,7 +358,10 @@ export async function runReview(
 			canSubmitVerdict,
 			approve: config.approve,
 			currentVerdict,
-			hasDiscardedFindings: droppedFiles.size > 0,
+			// 過去の実行で破棄した指摘もスレッドになっていないので、未解決 0 件は
+			// 「全部片付いた」を意味しない。mode: full で見直すまで持ち越す。
+			hasDiscardedFindings:
+				droppedFiles.size > 0 || hasUnreviewedDrops(previousRuns),
 		});
 
 		if (event !== 'NONE') {
@@ -378,7 +384,7 @@ export async function runReview(
 				log(`could not refresh review threads: ${describe(error)}`);
 			}
 		}
-		const runs = record(event, posted.length);
+		const runs = record(event, posted.length, droppedFiles.size);
 
 		await writeSticky({
 			reviewedSha: pr.headSha,
