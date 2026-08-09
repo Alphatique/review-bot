@@ -1,7 +1,10 @@
-import type { ExistingFinding } from './dedupe';
 import { isAtLeastAsSevere, type Severity } from './schema';
 
-export type ReviewEvent = 'COMMENT' | 'REQUEST_CHANGES';
+/** Review として提出できるイベント。 */
+export type ReviewEvent = 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE';
+
+/** NONE は「Review を作らない」を表す。 */
+export type EventDecision = ReviewEvent | 'NONE';
 
 export const REQUEST_CHANGES_ON_VALUES = [
 	'none',
@@ -15,28 +18,36 @@ export interface DecisionInput {
 	/** 今回のレビューで新たに投稿する指摘。 */
 	newFindings: readonly { severity: Severity }[];
 	/** GitHub 上に既にある bot の指摘。 */
-	existing: readonly ExistingFinding[];
+	existing: readonly { severity: Severity; isResolved: boolean }[];
 	threshold: RequestChangesOn;
 	/**
-	 * REQUEST_CHANGES を提出できるか。
-	 * bot 自身が作成した PR には提出できず 422 になるため false を渡す。
+	 * APPROVE / REQUEST_CHANGES を提出できるか。
+	 * bot 自身が作成した PR にはどちらも提出できず 422 になるため false を渡す。
 	 */
-	canRequestChanges: boolean;
+	canSubmitVerdict: boolean;
+	/** approve input。既定 false。 */
+	approve: boolean;
 }
 
-export function decideEvent(input: DecisionInput): ReviewEvent {
-	if (!input.canRequestChanges) return 'COMMENT';
-	if (input.threshold === 'none') return 'COMMENT';
+export function decideEvent(input: DecisionInput): EventDecision {
+	const unresolved = input.existing.filter(e => !e.isResolved);
+	// 投稿後の未解決件数。board を組み立てる前に判定するため、ここで直接数える。
+	const outstandingAfter = unresolved.length + input.newFindings.length;
 
-	const threshold: Severity = input.threshold;
+	if (input.approve && input.canSubmitVerdict && outstandingAfter === 0) {
+		return 'APPROVE';
+	}
 
-	const hasNew = input.newFindings.some(f =>
-		isAtLeastAsSevere(f.severity, threshold),
-	);
-	if (hasNew) return 'REQUEST_CHANGES';
+	if (input.threshold !== 'none' && input.canSubmitVerdict) {
+		const threshold: Severity = input.threshold;
+		const hasNew = input.newFindings.some(f =>
+			isAtLeastAsSevere(f.severity, threshold),
+		);
+		const hasUnresolved = unresolved.some(e =>
+			isAtLeastAsSevere(e.severity, threshold),
+		);
+		if (hasNew || hasUnresolved) return 'REQUEST_CHANGES';
+	}
 
-	const hasUnresolved = input.existing.some(
-		e => !e.isResolved && isAtLeastAsSevere(e.severity, threshold),
-	);
-	return hasUnresolved ? 'REQUEST_CHANGES' : 'COMMENT';
+	return (input.newFindings.length > 0 || unresolved.length > 0) ? 'COMMENT' : 'NONE';
 }

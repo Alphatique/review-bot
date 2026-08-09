@@ -165,7 +165,8 @@ export async function runReview(
 			newFindings: toPost,
 			existing,
 			threshold: config.requestChangesOn,
-			canRequestChanges: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
+			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
+			approve: false,
 		});
 
 		const body = renderSummary({
@@ -179,7 +180,7 @@ export async function runReview(
 
 		await github.createReview({
 			body,
-			event,
+			event: event === 'NONE' ? 'COMMENT' : event,
 			commitId: pr.headSha,
 			comments: inline,
 		});
