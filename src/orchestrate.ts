@@ -130,7 +130,11 @@ export async function runReview(
 			toolName: SUBMIT_TOOL_NAME,
 		});
 
-		let outcome: AgentOutcome = { ok: false, error: 'not attempted' };
+		let outcome: AgentOutcome = {
+			ok: false,
+			error: 'not attempted',
+			metrics: { costUsd: 0, durationMs: 0 },
+		};
 		for (let attempt = 1; attempt <= config.maxRetries; attempt += 1) {
 			log(`agent attempt ${attempt}/${config.maxRetries}`);
 			outcome = await deps.runAgent({ prompt });

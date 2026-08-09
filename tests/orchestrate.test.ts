@@ -86,7 +86,13 @@ function setup(options: FakeOptions = {}) {
 		github,
 		runAgent: async input => {
 			prompts.push(input.prompt);
-			return outcomes.shift() ?? { ok: true, findings: [] };
+			return (
+				outcomes.shift() ?? {
+					ok: true,
+					findings: [],
+					metrics: { costUsd: 0, durationMs: 0 },
+				}
+			);
 		},
 		readInstructions: async () => options.instructions ?? null,
 		log: () => {},
@@ -127,7 +133,7 @@ describe('runReview', () => {
 
 	test('コメント可能行の指摘をインラインコメントとして投稿する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ line: 2 })] }],
+			outcomes: [{ ok: true, findings: [finding({ line: 2 })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews).toHaveLength(1);
@@ -139,7 +145,7 @@ describe('runReview', () => {
 
 	test('コメント可能行でない指摘はサマリへ落とす', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ line: 999 })] }],
+			outcomes: [{ ok: true, findings: [finding({ line: 999 })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.comments).toHaveLength(0);
@@ -148,7 +154,7 @@ describe('runReview', () => {
 
 	test('line が null の指摘はサマリへ落とす', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ line: null })] }],
+			outcomes: [{ ok: true, findings: [finding({ line: null })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.comments).toHaveLength(0);
@@ -157,7 +163,7 @@ describe('runReview', () => {
 
 	test('閾値以上の指摘があれば REQUEST_CHANGES で提出する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ severity: 'critical' })] }],
+			outcomes: [{ ok: true, findings: [finding({ severity: 'critical' })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.event).toBe('REQUEST_CHANGES');
@@ -165,7 +171,7 @@ describe('runReview', () => {
 
 	test('閾値未満なら COMMENT で提出する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ severity: 'minor' })] }],
+			outcomes: [{ ok: true, findings: [finding({ severity: 'minor' })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.event).toBe('COMMENT');
@@ -174,7 +180,7 @@ describe('runReview', () => {
 	test('bot 自身の PR には REQUEST_CHANGES を出さない', async () => {
 		const { deps, reviews } = setup({
 			pr: { authorLogin: 'github-actions[bot]' },
-			outcomes: [{ ok: true, findings: [finding({ severity: 'critical' })] }],
+			outcomes: [{ ok: true, findings: [finding({ severity: 'critical' })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
 		});
 		await runReview(deps, { ...CONFIG, requestChangesOn: 'critical' });
 		expect(reviews[0]!.event).toBe('COMMENT');
@@ -183,7 +189,7 @@ describe('runReview', () => {
 	test('既存と重複する指摘は再投稿しない', async () => {
 		const f = finding();
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [f] }],
+			outcomes: [{ ok: true, findings: [f], metrics: { costUsd: 0.1, durationMs: 1000 } }],
 			existing: [
 				{
 					key: findingKey(f.file, f.title),
@@ -199,7 +205,7 @@ describe('runReview', () => {
 
 	test('未解決の既存指摘があれば REQUEST_CHANGES を維持する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [] }],
+			outcomes: [{ ok: true, findings: [], metrics: { costUsd: 0.1, durationMs: 1000 } }],
 			existing: [
 				{
 					key: 'a'.repeat(12),
@@ -216,8 +222,8 @@ describe('runReview', () => {
 	test('失敗したらリトライする', async () => {
 		const { deps, prompts } = setup({
 			outcomes: [
-				{ ok: false, error: 'boom' },
-				{ ok: true, findings: [] },
+				{ ok: false, error: 'boom', metrics: { costUsd: 0.1, durationMs: 1000 } },
+				{ ok: true, findings: [], metrics: { costUsd: 0.1, durationMs: 1000 } },
 			],
 		});
 		const result = await runReview(deps, CONFIG);
@@ -228,9 +234,9 @@ describe('runReview', () => {
 	test('リトライを使い切ったら失敗通知を投稿する', async () => {
 		const { deps, reviews } = setup({
 			outcomes: [
-				{ ok: false, error: 'boom' },
-				{ ok: false, error: 'boom' },
-				{ ok: false, error: 'boom' },
+				{ ok: false, error: 'boom', metrics: { costUsd: 0.1, durationMs: 1000 } },
+				{ ok: false, error: 'boom', metrics: { costUsd: 0.1, durationMs: 1000 } },
+				{ ok: false, error: 'boom', metrics: { costUsd: 0.1, durationMs: 1000 } },
 			],
 		});
 		const result = await runReview(deps, CONFIG);
@@ -278,6 +284,7 @@ describe('runReview', () => {
 						finding({ severity: 'major', title: 'b' }),
 						finding({ severity: 'major', title: 'c' }),
 					],
+					metrics: { costUsd: 0.1, durationMs: 1000 },
 				},
 			],
 		});

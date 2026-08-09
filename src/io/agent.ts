@@ -56,9 +56,34 @@ export function buildAgentEnv(
 	return env;
 }
 
+/**
+ * Agent 実行の実測値。失敗時も返す（タイムアウトや予算超過でもコストは発生する）。
+ * result メッセージが届く前に abort された場合は 0 になる。これは
+ * 「コストがかからなかった」ではなく「計測できなかった」を意味する。
+ */
+export interface AgentMetrics {
+	costUsd: number;
+	durationMs: number;
+}
+
 export type AgentOutcome =
-	| { ok: true; findings: Finding[] }
-	| { ok: false; error: string };
+	| { ok: true; findings: Finding[]; metrics: AgentMetrics }
+	| { ok: false; error: string; metrics: AgentMetrics };
+
+/** SDK の result メッセージから実測値を取り出す。result 以外なら null。 */
+export function extractMetrics(message: unknown): AgentMetrics | null {
+	if (typeof message !== 'object' || message === null) return null;
+	const record = message as Record<string, unknown>;
+	if (record.type !== 'result') return null;
+	return {
+		costUsd: toFiniteNumber(record.total_cost_usd),
+		durationMs: toFiniteNumber(record.duration_ms),
+	};
+}
+
+function toFiniteNumber(value: unknown): number {
+	return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
 
 export interface RunAgentInput {
 	prompt: string;
@@ -78,6 +103,7 @@ export interface RunAgentInput {
 export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 	let captured: unknown = null;
 	let callCount = 0;
+	let metrics: AgentMetrics = { costUsd: 0, durationMs: 0 };
 
 	const submitReview = tool(
 		'submit_review',
@@ -131,6 +157,7 @@ export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 				}
 			}
 			if (message.type === 'result') {
+				metrics = extractMetrics(message) ?? metrics;
 				input.log(`agent result: ${JSON.stringify(message).slice(0, 500)}`);
 			}
 		}
@@ -139,6 +166,7 @@ export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 		return {
 			ok: false,
 			error: timedOut ? `agent timed out after ${input.timeoutMs}ms` : detail,
+			metrics,
 		};
 	} finally {
 		clearTimeout(timer);
@@ -146,15 +174,23 @@ export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 	}
 
 	if (timedOut) {
-		return { ok: false, error: `agent timed out after ${input.timeoutMs}ms` };
+		return {
+			ok: false,
+			error: `agent timed out after ${input.timeoutMs}ms`,
+			metrics,
+		};
 	}
 	if (callCount === 0) {
-		return { ok: false, error: `agent did not call ${SUBMIT_TOOL_NAME}` };
+		return {
+			ok: false,
+			error: `agent did not call ${SUBMIT_TOOL_NAME}`,
+			metrics,
+		};
 	}
 
 	const parsed = parseFindings(captured);
 	if (!parsed.ok) {
-		return { ok: false, error: `invalid tool input: ${parsed.error}` };
+		return { ok: false, error: `invalid tool input: ${parsed.error}`, metrics };
 	}
-	return { ok: true, findings: parsed.value };
+	return { ok: true, findings: parsed.value, metrics };
 }
