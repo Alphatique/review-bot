@@ -1,13 +1,5 @@
 import { findingKey } from './marker';
-import type { Finding, Severity } from './schema';
-
-/** GitHub 上に既に存在する bot の指摘。 */
-export interface ExistingFinding {
-	key: string;
-	severity: Severity;
-	isResolved: boolean;
-	isOutdated: boolean;
-}
+import type { Finding } from './schema';
 
 export interface KeyedFinding extends Finding {
 	key: string;
@@ -19,12 +11,12 @@ export interface DedupeResult {
 }
 
 /**
- * 新規指摘を既存コメントと突き合わせ、まだ投稿していないものだけを返す。
+ * 新規指摘を既存スレッドと突き合わせ、まだ投稿していないものだけを返す。
  * resolve 済み・outdated でも再投稿はしない（人間の判断を蒸し返さない）。
  */
 export function dedupe(
 	findings: readonly Finding[],
-	existing: readonly ExistingFinding[],
+	existing: readonly { key: string }[],
 ): DedupeResult {
 	const existingKeys = new Set(existing.map(e => e.key));
 	const seen = new Set<string>();

@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { dedupe, type ExistingFinding } from '../../src/core/dedupe';
+import { dedupe } from '../../src/core/dedupe';
 import { findingKey } from '../../src/core/marker';
 import type { Finding } from '../../src/core/schema';
+
+interface ExistingLike {
+	key: string;
+	isResolved: boolean;
+	isOutdated: boolean;
+}
 
 function finding(overrides: Partial<Finding> = {}): Finding {
 	return {
@@ -16,11 +22,10 @@ function finding(overrides: Partial<Finding> = {}): Finding {
 
 function existing(
 	f: Finding,
-	overrides: Partial<ExistingFinding> = {},
-): ExistingFinding {
+	overrides: Partial<ExistingLike> = {},
+): ExistingLike {
 	return {
 		key: findingKey(f.file, f.title),
-		severity: f.severity,
 		isResolved: false,
 		isOutdated: false,
 		...overrides,

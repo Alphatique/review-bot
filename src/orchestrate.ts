@@ -2,6 +2,7 @@ import type { Config } from './config';
 import { decideEvent, type ReviewEvent } from './core/decision';
 import { dedupe, type KeyedFinding } from './core/dedupe';
 import { analyzeDiff, isCommentable } from './core/diff';
+import { parseStickyMarker } from './core/marker';
 import { buildPrompt, DEFAULT_INSTRUCTIONS } from './core/prompt';
 import {
 	renderFailureSummary,
@@ -92,8 +93,13 @@ export async function runReview(
 	}
 
 	try {
-		const lastReviewed =
-			config.mode === 'full' ? null : await github.getLastReviewedCommit();
+		// TODO(Task 8): sticky から前回レビュー地点を読む経路は暫定。
+		// 本来は findSticky の結果を board 組み立てや upsert にも使い回すべきだが、
+		// この段階では getLastReviewedCommit の代替として最小限差し替えるだけに留める。
+		const sticky = config.mode === 'full' ? null : await github.findSticky();
+		const lastReviewed = sticky
+			? (parseStickyMarker(sticky.body)?.reviewed ?? null)
+			: null;
 		const from = lastReviewed ?? pr.baseSha;
 		log(`reviewing ${from}...${pr.headSha} (mode=${config.mode})`);
 
@@ -143,7 +149,7 @@ export async function runReview(
 		}
 		if (!outcome.ok) return failure(outcome.error);
 
-		const existing = await github.listExistingFindings();
+		const existing = await github.listThreads();
 		const { toPost } = dedupe(outcome.findings, existing);
 
 		const inline: InlineCommentInput[] = [];

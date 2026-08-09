@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { Config } from '../src/config';
+import type { ThreadInfo } from '../src/core/board';
 import { DEFAULT_EXCLUDE } from '../src/core/diff';
 import {
+	buildStickyMarker,
 	findingKey,
 	parseInlineMarker,
 	SUMMARY_MARKER,
@@ -58,7 +60,7 @@ interface FakeOptions {
 	pr?: Partial<PullRequestInfo>;
 	lastReviewed?: string | null;
 	diff?: string;
-	existing?: Awaited<ReturnType<GitHubClient['listExistingFindings']>>;
+	threads?: ThreadInfo[];
 	outcomes?: AgentOutcome[];
 	instructions?: string | null;
 }
@@ -68,17 +70,28 @@ function setup(options: FakeOptions = {}) {
 	const prompts: string[] = [];
 	const diffRequests: { from: string; to: string }[] = [];
 	const outcomes = [...(options.outcomes ?? [])];
+	const stickyWrites: { commentId: number | null; body: string }[] = [];
+	const dismissals: string[] = [];
 
 	const github: GitHubClient = {
 		getPullRequest: async () => ({ ...PR, ...options.pr }),
-		getLastReviewedCommit: async () => options.lastReviewed ?? null,
 		getDiff: async (from, to) => {
 			diffRequests.push({ from, to });
 			return options.diff ?? DIFF;
 		},
-		listExistingFindings: async () => options.existing ?? [],
+		listThreads: async () => options.threads ?? [],
+		findSticky: async () =>
+			options.lastReviewed
+				? { commentId: 1, body: buildStickyMarker(options.lastReviewed) }
+				: null,
+		upsertSticky: async input => {
+			stickyWrites.push(input);
+		},
 		createReview: async input => {
 			reviews.push(input);
+		},
+		dismissOwnApproval: async message => {
+			dismissals.push(message);
 		},
 	};
 
@@ -98,7 +111,7 @@ function setup(options: FakeOptions = {}) {
 		log: () => {},
 	};
 
-	return { deps, reviews, prompts, diffRequests };
+	return { deps, reviews, prompts, diffRequests, stickyWrites, dismissals };
 }
 
 function finding(overrides: Partial<Finding> = {}): Finding {
@@ -190,10 +203,14 @@ describe('runReview', () => {
 		const f = finding();
 		const { deps, reviews } = setup({
 			outcomes: [{ ok: true, findings: [f], metrics: { costUsd: 0.1, durationMs: 1000 } }],
-			existing: [
+			threads: [
 				{
 					key: findingKey(f.file, f.title),
 					severity: 'major',
+					title: f.title,
+					file: f.file,
+					line: f.line,
+					url: 'https://example.test/1',
 					isResolved: false,
 					isOutdated: false,
 				},
@@ -206,10 +223,14 @@ describe('runReview', () => {
 	test('未解決の既存指摘があれば REQUEST_CHANGES を維持する', async () => {
 		const { deps, reviews } = setup({
 			outcomes: [{ ok: true, findings: [], metrics: { costUsd: 0.1, durationMs: 1000 } }],
-			existing: [
+			threads: [
 				{
 					key: 'a'.repeat(12),
 					severity: 'critical',
+					title: '既存の重大な指摘',
+					file: 'src/a.ts',
+					line: 1,
+					url: 'https://example.test/2',
 					isResolved: false,
 					isOutdated: false,
 				},

@@ -259,7 +259,7 @@ export type AgentOutcome =
 
 差分に含まれないファイルへの指摘だけが真に投稿できないケースとして残るが、これは `src/core/prompt.ts` で「差分に含まれるファイル以外を指摘対象にしない」と明示することで防ぐ。それでも出てきた場合は破棄し、ログに残す。
 
-**要検証**: `pulls.createReview` の `comments[]` が `subject_type` を受け付けるかは未確認。受け付けない場合は Review 投稿後に `pulls.createReviewComment` を個別に呼ぶ（スレッドは同様に立つので機能への影響はなく、API 呼び出し回数が増えるだけ）。**実装の最初のステップでこれを確定させる。**
+**検証済み（Task 6）**: `node_modules/@octokit/openapi-types/types.d.ts` の `"pulls/create-review"` オペレーション定義（`requestBody.content["application/json"].comments[]`）を直接確認したところ、フィールドは `path` / `position` / `body` / `line` / `side` / `start_line` / `start_side` のみで `subject_type` は無い。`subject_type` が出現する箇所は `"pulls/create-review-comment"` のリクエストボディと、レスポンス用の `pull-request-review-comment` スキーマ・webhook ペイロードのみ（`grep -n "subject_type"` はヒットするが、いずれも create-review の request body ではない）。よって `createReview` は Review 本体を `pulls.createReview`（インラインコメントのみ）で投稿したあと、ファイル単位コメントを `pulls.createReviewComment`（`subject_type: 'file'`）で個別に投稿する実装を採用した（`src/io/github.ts`）。スレッドは同様に立つため機能への影響はなく、API 呼び出し回数が増えるだけ。
 
 ## 6. APPROVE の設計
 
