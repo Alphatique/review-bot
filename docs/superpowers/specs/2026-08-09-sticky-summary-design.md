@@ -25,6 +25,7 @@ PR ごとに **1 つの、更新され続ける状態ボード**を持つ。PR �
 | サマリーの形 | 未解決は平積みリンク一覧、解決済み・履歴・実行情報は折りたたみ |
 | 指摘 body | サマリーに複製せずスレッドに置いたまま。サマリーは索引に徹する |
 | Review の作成 | 新規インラインコメントがあるか、イベント状態を変えたいときだけ |
+| 実行コスト | `run` マーカーに毎回記録し、sticky に PR 全体の累計を出す。失敗回も記録する |
 | sticky の更新 | 常に edit。削除して再投稿はしない |
 | APPROVE | opt-in（`approve` input、既定 `false`）。未解決 0 件のときだけ |
 | 手動 resolve | 誰が resolve したかは問わない。resolve を「対応済みの意思表示」とみなす |
@@ -64,24 +65,26 @@ PR ごとに **1 つの、更新され続ける状態ボード**を持つ。PR �
 
 </details>
 
-<details><summary>レビュー履歴 (2)</summary>
+<details><summary>レビュー履歴 (3 回 · 合計 $0.61)</summary>
 
-| commit | 範囲 | 新規 | 判定 |
-| --- | --- | --- | --- |
-| `a1b2c3d` | 増分 | 1 | 💬 COMMENT |
-| `9f8e7d6` | 全体 | 3 | 🔴 REQUEST_CHANGES |
+| commit | 範囲 | 新規 | 判定 | コスト |
+| --- | --- | --- | --- | --- |
+| `a1b2c3d` | 増分 | 1 | 💬 COMMENT | $0.18 |
+| `77aa88b` | 増分 | — | ⚠️ 失敗 | $0.12 |
+| `9f8e7d6` | 全体 | 3 | 🔴 REQUEST_CHANGES | $0.31 |
 
 </details>
 
 <details><summary>実行情報</summary>
 
-`claude-sonnet-5` · effort `high` · 42s · $0.18
+今回: `claude-sonnet-5` · effort `high` · 42s · $0.18（1 回目で成功）
 
 </details>
 
 <!-- review-bot:v1 sticky reviewed=a1b2c3d -->
-<!-- review-bot:v1 run commit=9f8e7d6 mode=full new=3 event=REQUEST_CHANGES -->
-<!-- review-bot:v1 run commit=a1b2c3d mode=auto new=1 event=COMMENT -->
+<!-- review-bot:v1 run commit=9f8e7d6 mode=full new=3 event=REQUEST_CHANGES cost=0.3104 sec=58 attempts=1 model=claude-sonnet-5 effort=high -->
+<!-- review-bot:v1 run commit=77aa88b mode=auto new=0 event=FAILED cost=0.1233 sec=480 attempts=3 model=claude-sonnet-5 effort=high -->
+<!-- review-bot:v1 run commit=a1b2c3d mode=auto new=1 event=COMMENT cost=0.1817 sec=42 attempts=1 model=claude-sonnet-5 effort=high -->
 ```
 
 意図した性質:
@@ -90,7 +93,8 @@ PR ごとに **1 つの、更新され続ける状態ボード**を持つ。PR �
 - **解決済みは常に折りたたむ。** 長い PR で肥大するため、`<summary>` に件数を出して中身は畳む。
 - **各行はスレッドへのリンク。** サマリーは索引であって議論の場ではない。
 - 未解決が 0 件のときは `### 未解決の指摘` セクションごと省き、冒頭の状態行を `` `a1b2c3d` までレビュー済み · 未解決の指摘はありません `` にする。
-- **実行情報は最新回のみ。** model / effort / 所要時間 / コストは `run` マーカーに保存しないため、過去回の値は残らない。履歴テーブルに出すのは commit・範囲・新規件数・判定の 4 つだけ。
+- **コストは毎回 `run` マーカーに記録し、累計を出す。** 履歴の `<summary>` に PR 全体の合計、テーブルに各回の内訳を出す。累計は `run` マーカーの `cost` を合計するだけで求まる。
+- **`実行情報` セクションは最新回のみ。** 累計は履歴側にあるので重複させない。リトライした回は `（3 回目で成功）` のように attempt 数を添える。
 
 失敗時は先頭に以下のバナーを差し込む。**それ以外のセクションはスレッドを取得し直して通常どおり再描画する**（エージェントが失敗しただけで GitHub API は生きているため）。前回の sticky 本文をパースして再利用することはしない。
 
@@ -113,13 +117,21 @@ PR ごとに **1 つの、更新され続ける状態ボード**を持つ。PR �
 ```
 インライン（既存のまま）  <!-- review-bot:v1 key=<12hex> sev=<severity> -->
 sticky 本体              <!-- review-bot:v1 sticky reviewed=<sha> -->
-実行履歴（sticky に追記） <!-- review-bot:v1 run commit=<sha> mode=auto|full new=<n> event=<event> -->
+実行履歴（sticky に追記） <!-- review-bot:v1 run commit=<sha> mode=auto|full new=<n>
+                             event=<event> cost=<usd> sec=<n> attempts=<n>
+                             model=<id> effort=<effort> -->
 ```
 
 - `sticky` マーカーは sticky コメントの識別と増分起点の保持を兼ねる。1 コメントに 1 つ。
-- `run` マーカーは実行のたびに 1 行追記する。履歴テーブルはこのマーカー群から再構成する。1 行あたり数十バイト。
-- `event` は `COMMENT` / `REQUEST_CHANGES` / `APPROVE` / `NONE` のいずれか。**Review を作らなかった回（`NONE`）も記録する。** レビューが走った事実自体が履歴として意味を持つため。履歴テーブルの判定列には `—` を出す。
-- レビューが失敗した回は `run` マーカーを追記しない。`reviewed` を進めないのと同じ理由で、その commit はレビュー済みとして記録しない。
+- `run` マーカーは実行のたびに 1 行追記する。履歴テーブルと累計コストはこのマーカー群から再構成する。1 行あたり 150 バイト程度。
+- `event` は `COMMENT` / `REQUEST_CHANGES` / `APPROVE` / `NONE` / `FAILED` のいずれか。
+  - **Review を作らなかった回（`NONE`）も記録する。** レビューが走った事実自体が履歴として意味を持つため。判定列には `—` を出す。
+  - **失敗した回（`FAILED`）も記録する。** 失敗してもコストは発生しているので、記録しないと累計が実態より小さく出る。`reviewed=<sha>` を進めないことが「その commit はレビュー済みでない」ことを表すのであって、`run` マーカーの有無ではない。判定列には `⚠️ 失敗` を出す。
+- `cost` は **その実行の全 attempt の合計**。`max-cost-usd` はエージェント 1 回あたりの上限なので、`max-retries` 回ぶん積み上がりうる。`attempts` を併記することでこれが読み取れる。
+- `sec` は全 attempt の合計秒数（整数）。
+
+**パース方針。** `run` マーカーは `key=value` の緩いパースにする。**未知のキーは無視し、欠損したキーは既定値**（`cost=0`、`sec=0`、`attempts=1`、`model`/`effort` は空）で埋める。こうしておけば、後からキーを足しても古いマーカーがそのまま読める。値は `[\w.:@/-]+` に制限し、外れた値は欠損扱いにする（`model` に任意文字列が来ても `-->` でマーカーを閉じられないようにするため）。
+
 - インラインマーカーは既存実装のまま。パースは末尾一致を採用する既存の防御（`src/core/marker.ts:42`）を維持する。
 
 **指摘タイトルの復元。** インラインコメント本文の 1 行目 `🔴 **critical** — <タイトル>` からパースする。書式は `renderInlineComment` が生成しているので安定する。パースに失敗した場合は `(タイトル不明)` とし、URL とファイルパスだけを出す。索引としては劣化しても機能する。
@@ -138,10 +150,18 @@ sticky 本体              <!-- review-bot:v1 sticky reviewed=<sha> -->
 | `src/io/github.ts` | GraphQL に `path` / `line` / `url` / `body` を追加。sticky の find・upsert、`dismissReview`、`listOwnReviews` を追加 |
 | `src/config.ts` | `approve`（boolean、既定 `false`）を追加 |
 | `src/core/prompt.ts` | 「差分に含まれるファイル以外を指摘対象にしない」を明示 |
-| `src/orchestrate.ts` | フロー全体 |
-| `action.yml` | `approve` input を追加 |
+| `src/io/agent.ts` | `AgentOutcome` に実行メトリクスを追加 |
+| `src/orchestrate.ts` | フロー全体。attempt ごとのメトリクスを合算する |
+| `action.yml` | `approve` input と 2 つの output を追加 |
 
-**outputs は現状維持。** `findings-count` などは今回の新規分を表す既存の意味のまま変えない。未解決総数の output 追加はスコープに含めない。
+**outputs**。既存の `findings-count` などは今回の新規分を表す意味のまま変えない。累計コストを workflow 側から使えるよう、次の 2 つだけ追加する。
+
+| output | 内容 |
+| --- | --- |
+| `cost-usd` | この実行のコスト（全 attempt 合計） |
+| `total-cost-usd` | PR 全体の累計コスト（`run` マーカーの合計） |
+
+未解決総数の output 追加はスコープに含めない。
 
 `dedupe.ts` の `ExistingFinding` は `ThreadInfo` に包含されるため、`dedupe()` は `ThreadInfo[]` をそのまま受け取れる。`ExistingFinding` 型は削除して `dedupe()` のシグネチャを構造的部分型で受ける形に寄せる。
 
@@ -184,6 +204,25 @@ dismissOwnApproval(message: string): Promise<void>;
 
 `dismissOwnApproval` は `pulls.listReviews` から自分の最新 `APPROVED` を探し、あれば `pulls.dismissReview` を呼ぶ。
 
+### `src/io/agent.ts` の実行メトリクス
+
+現状 `runAgent` は `result` メッセージを `JSON.stringify` してログに流すだけで、コストを呼び出し側に返していない（`src/io/agent.ts:133`）。ここから `total_cost_usd` / `duration_ms` を拾って返す。
+
+```ts
+export interface AgentMetrics {
+  costUsd: number;
+  durationMs: number;
+}
+
+export type AgentOutcome =
+  | { ok: true; findings: Finding[]; metrics: AgentMetrics }
+  | { ok: false; error: string; metrics: AgentMetrics };
+```
+
+**失敗時もメトリクスを返す。** タイムアウトや予算超過は、そこまでに使ったぶんを消費済みだから。ただし `result` メッセージが届く前に abort された場合や、SDK が例外を投げた場合は値が取れない。そのときは `costUsd: 0` を返す。**これは「コストがかからなかった」ではなく「計測できなかった」を意味する** — 累計は下振れしうる。過大に見積もって PR に嘘の数字を出すよりは、取れたぶんだけを積む方を選ぶ。
+
+`orchestrate` は attempt ごとの `metrics` を合算し、`run` マーカーの `cost` / `sec` / `attempts` に書く。
+
 ## 5. データフロー
 
 ```
@@ -194,8 +233,9 @@ dismissOwnApproval(message: string): Promise<void>;
 5  差分ゼロ → sticky を再描画（reviewed を head へ）して終了
 6  エージェント実行（リトライ込み）
 7  失敗 → スレッド取得 → board 組み立て → sticky に失敗バナー付きで更新
+        / run マーカーを event=FAILED で追記（コストは発生しているため）
         / 自分の APPROVE があれば dismiss / reviewed は据え置き
-        / run マーカーは追記しない / RunResult は failed
+        / RunResult は failed
 8  スレッド取得 → dedupe
 9  行が差分内 → インラインコメント / それ以外 → ファイル単位コメント
 10 decideEvent
@@ -269,8 +309,10 @@ threshold ≠ none かつ canRequestChanges かつ
 | sticky の upsert 失敗 | ログに残して続行。レビュー自体は成功しているので落とさない。`reviewed` が進まないため次回同じ範囲を再レビューするが、`dedupe` により二重投稿はしない（安全側に倒れる） |
 | sticky を人が削除した | 次回新規作成。履歴は失われるがログに残す。`reviewed` も失われるため 1 回だけ全差分レビューになる |
 | fork PR | 現状のまま。`createReview` も `createComment` も試みずに abort |
-| エージェント失敗 | sticky に失敗バナー / `reviewed` 据え置き / 自分の APPROVE を dismiss / `fail-on-error` に従う |
+| エージェント失敗 | sticky に失敗バナー / `run` マーカーを `FAILED` で追記 / `reviewed` 据え置き / 自分の APPROVE を dismiss / `fail-on-error` に従う |
 | ファイル単位コメントの投稿失敗 | その指摘は board に載らない。ログに残し、レビュー全体は成功扱いとする |
+| 実行メトリクスを取得できない | `costUsd: 0` として記録し、累計は下振れする。過大な数字を出すよりは良いと判断する |
+| `run` マーカーのパース失敗 | その 1 行を無視して続行。履歴が 1 行減り累計が下振れするだけで、他の行は読める |
 
 ## 9. テスト計画
 
@@ -279,6 +321,10 @@ threshold ≠ none かつ canRequestChanges かつ
 **`tests/core/marker.test.ts`**
 - sticky マーカーの build → parse 往復
 - run マーカーの build → parse 往復、複数行の順序保持
+- run マーカーの**未知キーを無視する**
+- run マーカーの**欠損キーが既定値で埋まる**（`cost=0` / `attempts=1` など）— 拡張前の古いマーカーが読めること
+- run マーカーの値が `[\w.:@/-]+` から外れた場合に欠損扱いになる
+- `run` マーカー群からの累計コスト算出（`FAILED` 行も合算されること）
 - インラインコメント本文からのタイトル抽出
 - 指摘 body に偽マーカーが混ざった場合に末尾の正規ブロックが勝つ（既存テストの維持）
 - タイトル書式が壊れている場合に `null` を返す
@@ -294,6 +340,8 @@ threshold ≠ none かつ canRequestChanges かつ
 - 未解決あり / 未解決ゼロ / 失敗バナーあり / 履歴あり の各形
 - 解決済みが `<details>` に入り、`### 未解決の指摘` は入らない
 - `(outdated)` の付与
+- 履歴テーブルのコスト列と `<summary>` の累計が一致する
+- `FAILED` 行の判定列が `⚠️ 失敗`、`NONE` 行が `—` になる
 - sticky マーカーと run マーカーが末尾に出力される
 - `en` / `ja` 両方
 
@@ -307,13 +355,17 @@ threshold ≠ none かつ canRequestChanges かつ
 **`tests/orchestrate.test.ts`**
 - 指摘ゼロなら `createReview` を呼ばず sticky だけ更新する
 - 失敗時に `reviewed` が進まない
+- 失敗時に `run` マーカーが `event=FAILED` で追記され、コストが累計に乗る
 - 失敗時に自分の APPROVE を dismiss する
+- リトライした場合に全 attempt の `costUsd` / `durationMs` が合算され、`attempts` に回数が入る
 - sticky が無い PR で `baseSha` を起点にする
 - sticky の upsert が失敗してもレビュー全体は成功扱いになる
 
 ## 10. README への変更
 
 - `approve` input を Inputs 表に追加
+- `cost-usd` / `total-cost-usd` を Outputs 表に追加
+- `max-cost-usd` の説明に「**エージェント 1 回あたり**の上限であり、`max-retries` 回ぶん積み上がりうる」ことを補足する。sticky に累計が出るようになると、この差が目に見えるようになるため
 - 「bot の承認は人間のレビューの代替ではなく、ブランチ保護の根拠にしてはならない」節を追加。`request-changes-on` の同種の記述と並べる
 - 「The state lives in the review threads on GitHub. There is no database, no hidden state block, no display IDs.」を実態に合わせて書き直す。状態は sticky コメントのマーカーと review スレッドに分散して置かれる
 - 「Not supported」から `suggestion` 以外の記述を見直す
