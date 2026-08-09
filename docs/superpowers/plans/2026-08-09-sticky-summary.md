@@ -1963,7 +1963,14 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 			for (let i = reviews.length - 1; i >= 0; i -= 1) {
 				const review = reviews[i]!;
 				if (!isOwnComment(review.user, login)) continue;
-				// 自分の最新のレビューが APPROVED でなければ、既に別の状態で上書き済み。
+				// COMMENTED は承認状態を上書きしない。GitHub は各レビュアーの
+				// 「最新の APPROVED / CHANGES_REQUESTED」を見るので、間に
+				// COMMENTED を挟んでも前の APPROVED は生きている。読み飛ばす。
+				if (review.state === 'COMMENTED' || review.state === 'DISMISSED') {
+					continue;
+				}
+				// ここに来るのは APPROVED か CHANGES_REQUESTED。後者なら
+				// 取り下げる承認は無い。
 				if (review.state !== 'APPROVED') return;
 				await octokit.rest.pulls.dismissReview({
 					owner,
