@@ -6,7 +6,7 @@ Review pull requests with Claude. Findings are posted as inline review comments,
 - One summary comment per pull request, edited in place. It indexes every outstanding finding, records the review history, and shows the cumulative cost.
 - The state lives on GitHub: the findings are the review threads themselves, and the incremental starting point and the run history are markers inside the summary comment. There is no database.
 - Reviews are incremental by default: after the first run only the changes since the last review are sent to the model.
-- A review is only submitted when there is something to submit. A push that produces no new findings just refreshes the summary comment.
+- A review is only submitted when there is something to submit: new findings, or — when a human dismisses this action's `CHANGES_REQUESTED` while findings are still outstanding — a verdict that needs to be resubmitted. A push that triggers neither just refreshes the summary comment.
 
 ## Quick start
 
@@ -180,6 +180,8 @@ The action finds its own summary comment, reads the `reviewed=<sha>` marker insi
 
 A finding is identified by a hash of `file` + normalized `title`, embedded as an HTML comment at the end of each inline comment. Because the line number is not part of the identity, a finding is not posted twice when later commits shift it to a different line. Findings you have already resolved are **not** re-posted either — resolving a thread is a human decision and the action does not reopen it.
 
+Not every finding lands on a line. When the model cannot point to a changed line in a file that is part of the diff, the action posts it as a file-level review comment instead — it still gets its own thread, and the summary's index lists it without a line number. When a finding targets a file that is not part of the diff at all, there is nowhere to post it: the action discards it and shows the file names and count in a banner at the top of the summary comment.
+
 To force a review of the whole diff again:
 
 ```yaml
@@ -216,7 +218,9 @@ with:
 
 If you want a review to actually block a merge, enforce it with branch protection (require review approval / dismiss stale reviews). That decision belongs on the repository, not in this action.
 
-`REQUEST_CHANGES` cannot be submitted on a pull request opened by the same identity as the token. When the pull request author is a bot, the action falls back to `COMMENT` automatically.
+Neither `REQUEST_CHANGES` nor `APPROVE` can be submitted on a pull request opened by the same identity as the token — GitHub rejects a review of your own pull request. When the pull request author is a bot, such as Dependabot, the action posts `COMMENT` instead if there are new findings, and does nothing otherwise. This also means `approve: true` never approves a bot-authored pull request, no matter how many findings get resolved.
+
+Once this action submits `REQUEST_CHANGES`, nothing it does later dismisses it — not resolving every finding, not a clean re-run. GitHub keeps a reviewer's last submitted state until that reviewer submits a new one or a human dismisses it from the UI, and this action only ever dismisses its own `APPROVE` (and only when a run fails outright, see below). With `approve: false` (the default) and branch protection requiring review approval, a pull request that once triggered `REQUEST_CHANGES` stays blocked even after every finding is resolved. There are two ways out: turn on `approve`, so the action submits `APPROVE` once outstanding findings reach zero and GitHub treats it as this reviewer's newest state, superseding the `REQUEST_CHANGES` — or dismiss the review by hand from the pull request's UI.
 
 ## `approve` is not a review
 

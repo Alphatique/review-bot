@@ -23774,7 +23774,8 @@ function decideEvent(input) {
 		const threshold = input.threshold;
 		const hasNew = input.newFindings.some((f) => isAtLeastAsSevere(f.severity, threshold));
 		const hasUnresolved = unresolved.some((e) => isAtLeastAsSevere(e.severity, threshold));
-		if (hasNew || hasUnresolved) return "REQUEST_CHANGES";
+		const alreadyBlocking = input.currentVerdict === "CHANGES_REQUESTED";
+		if (hasNew || hasUnresolved && !alreadyBlocking) return "REQUEST_CHANGES";
 	}
 	return input.newFindings.length > 0 ? "COMMENT" : "NONE";
 }
@@ -25807,7 +25808,8 @@ const EN = {
 	unknownTitle: "(title unavailable)",
 	reviewPointer: "See the review summary comment for the full status of this pull request.",
 	errorDetails: "Error details",
-	oversizedWarning: (files) => `> ⚠️ ${files.length} file(s) were skipped because the diff exceeded the size limit and were **not reviewed**: ${files.map((f) => `\`${f}\``).join(", ")}`
+	oversizedWarning: (files) => `> ⚠️ ${files.length} file(s) were skipped because the diff exceeded the size limit and were **not reviewed**: ${files.map((f) => `\`${f}\``).join(", ")}`,
+	droppedWarning: (files) => `> ⚠️ ${files.length} finding(s) targeted file(s) outside the diff and were **discarded**: ${files.map((f) => `\`${f}\``).join(", ")}`
 };
 const JA = {
 	heading: "## 🤖 コードレビュー",
@@ -25834,7 +25836,8 @@ const JA = {
 	unknownTitle: "(タイトル不明)",
 	reviewPointer: "この PR の全体状況はレビューサマリーコメントを参照してください。",
 	errorDetails: "エラー概要",
-	oversizedWarning: (files) => `> ⚠️ 差分がサイズ上限を超えたため ${files.length} 件のファイルを**レビューしていません**: ${files.map((f) => `\`${f}\``).join(", ")}`
+	oversizedWarning: (files) => `> ⚠️ 差分がサイズ上限を超えたため ${files.length} 件のファイルを**レビューしていません**: ${files.map((f) => `\`${f}\``).join(", ")}`,
+	droppedWarning: (files) => `> ⚠️ 差分に含まれないファイルへの指摘 ${files.length} 件を**破棄しました**: ${files.map((f) => `\`${f}\``).join(", ")}`
 };
 function messages(lang) {
 	return lang === "ja" ? JA : EN;
@@ -26104,7 +26107,7 @@ async function runAgent(input) {
 /**
 * この Action が投稿した Review だと識別するマーカー。
 * GITHUB_TOKEN では自分の identity を確定できず Bot 判定にフォールバックする
-* ため、`dismissOwnApproval` が他 App の Review を「自分のもの」と誤認しない
+* ため、`getOwnVerdict` が他 App の Review を「自分のもの」と誤認しない
 * よう、投稿者判定とこのマーカーの AND で絞り込む。
 */
 const REVIEW_MARKER = "<!-- review-bot:v1 review -->";
@@ -26384,7 +26387,7 @@ function createGitHubClient(options) {
 				options.log(`could not post a file-level comment on ${comment.path}: ${error instanceof Error ? error.message : String(error)}`);
 			}
 		},
-		async dismissOwnApproval(message) {
+		async getOwnVerdict() {
 			const login = await resolveSelfLogin();
 			const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
 				owner,
@@ -26396,17 +26399,23 @@ function createGitHubClient(options) {
 				const review = reviews[i];
 				if (!isOwnComment(review.user, login)) continue;
 				if (!hasReviewMarker(review.body ?? "")) continue;
+				if (review.state === "DISMISSED") return null;
 				if (review.state !== "APPROVED" && review.state !== "CHANGES_REQUESTED") continue;
-				if (review.state !== "APPROVED") return;
-				await octokit.rest.pulls.dismissReview({
-					owner,
-					repo,
-					pull_number: prNumber,
-					review_id: review.id,
-					message
-				});
-				return;
+				return {
+					id: review.id,
+					state: review.state
+				};
 			}
+			return null;
+		},
+		async dismissReview(reviewId, message) {
+			await octokit.rest.pulls.dismissReview({
+				owner,
+				repo,
+				pull_number: prNumber,
+				review_id: reviewId,
+				message
+			});
 		}
 	};
 }
@@ -26531,6 +26540,7 @@ function renderSticky(input) {
 	const lines = [m.heading, ""];
 	if (input.failure !== null) lines.push(m.failureBanner(input.failure.sha), ">", `> <details><summary>${m.errorDetails}</summary>`, ">", "> ```", ...(input.failure.message.trim() || "(no details)").split("\n").map((line) => `> ${line}`), "> ```", ">", "> </details>", "");
 	if (input.oversizedFiles.length > 0) lines.push(m.oversizedWarning(input.oversizedFiles), "");
+	if (input.droppedFiles.length > 0) lines.push(m.droppedWarning(input.droppedFiles), "");
 	lines.push(renderStatusLine(input, m), "");
 	if (input.board.outstanding.length > 0) {
 		lines.push(m.outstandingHeading, "");
@@ -26687,7 +26697,8 @@ async function runReview(deps, config) {
 		log(`review failed: ${error}`);
 		const runs = record("FAILED", 0);
 		try {
-			await github.dismissOwnApproval(DISMISS_MESSAGE);
+			const verdict = await github.getOwnVerdict();
+			if (verdict?.state === "APPROVED") await github.dismissReview(verdict.id, DISMISS_MESSAGE);
 		} catch (dismissError) {
 			log(`could not dismiss the stale approval: ${describe(dismissError)}`);
 		}
@@ -26705,7 +26716,8 @@ async function runReview(deps, config) {
 			failure: {
 				message: error,
 				sha: pr.headSha
-			}
+			},
+			droppedFiles: []
 		});
 		return {
 			status: "failed",
@@ -26737,7 +26749,8 @@ async function runReview(deps, config) {
 				runs: previousRuns,
 				board: buildBoard(await github.listThreads()),
 				latest: null,
-				failure: null
+				failure: null,
+				droppedFiles: []
 			});
 			return {
 				status: "success",
@@ -26779,12 +26792,21 @@ async function runReview(deps, config) {
 		}
 		if (!outcome.ok) return await abort(outcome.error);
 		const existing = await github.listThreads();
+		const canSubmitVerdict = !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX);
+		let currentVerdict = null;
+		if (config.requestChangesOn !== "none" && canSubmitVerdict) try {
+			currentVerdict = (await github.getOwnVerdict())?.state ?? null;
+		} catch (error) {
+			log(`could not read the current verdict: ${describe(error)}`);
+		}
 		const { toPost } = dedupe(outcome.findings, existing);
 		const comments = [];
 		const posted = [];
+		const droppedFiles = /* @__PURE__ */ new Set();
 		for (const finding of toPost) {
 			if (!analysis.commentableLines.has(finding.file)) {
 				log(`dropped a finding outside the diff: ${finding.file}`);
+				droppedFiles.add(finding.file);
 				continue;
 			}
 			const line = isCommentable(analysis, finding.file, finding.line ?? -1) ? finding.line : null;
@@ -26799,8 +26821,9 @@ async function runReview(deps, config) {
 			newFindings: posted,
 			existing,
 			threshold: config.requestChangesOn,
-			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
-			approve: config.approve
+			canSubmitVerdict,
+			approve: config.approve,
+			currentVerdict
 		});
 		if (event !== "NONE") await github.createReview({
 			body: messages(config.language).reviewPointer,
@@ -26815,7 +26838,8 @@ async function runReview(deps, config) {
 			runs,
 			board: buildBoard(threads),
 			latest: latestRun(),
-			failure: null
+			failure: null,
+			droppedFiles: [...droppedFiles]
 		});
 		const counts = emptyCounts();
 		for (const finding of posted) counts[finding.severity] += 1;
