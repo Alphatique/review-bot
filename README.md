@@ -176,7 +176,9 @@ If the file does not exist, these built-in instructions are used instead:
 
 ## Incremental reviews
 
-The action finds its own summary comment, reads the `reviewed=<sha>` marker inside it, and diffs from that commit to the pull request head. The first run diffs from the base commit. Only a comment authored by the same identity as the token is trusted as the summary comment.
+The action finds its own summary comment, reads the `reviewed=<sha>` marker inside it, and diffs from that commit to the pull request head. The first run diffs from the base commit.
+
+The action confirms the comment's author before trusting it as the summary comment. Under the default `github-token` (`${{ github.token }}`), which is an installation token, GitHub exposes no endpoint that returns that token's own identity, so **the check narrows to "authored by a bot"** instead of a specific login. This blocks impersonation by a human posting a comment on the pull request, but not by another GitHub App installed on the same repository that echoes attacker-controlled pull-request text into a comment of its own — that co-installed app has to actually do this for the sticky comment to be spoofed. Supplying your own `github-token`, backed by a personal access token, alongside either `claude-code-oauth-token` or `anthropic-api-key` gets the stronger check: the action resolves the token's exact login and matches on that instead.
 
 A finding is identified by a hash of `file` + normalized `title`, embedded as an HTML comment at the end of each inline comment. Because the line number is not part of the identity, a finding is not posted twice when later commits shift it to a different line. Findings you have already resolved are **not** re-posted either — resolving a thread is a human decision and the action does not reopen it.
 
