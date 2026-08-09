@@ -1,11 +1,12 @@
 # review-bot
 
-Review pull requests with Claude and post the result as a **single Pull Request Review**: a summary in the review body plus inline comments anchored to the changed lines.
+Review pull requests with Claude. Findings are posted as inline review comments, and a single **summary comment** is kept up to date with the current state of the pull request.
 
 - Findings are posted where they belong, so each one can be discussed in its own thread.
-- The state lives in the review threads on GitHub. There is no database, no hidden state block, no display IDs.
+- One summary comment per pull request, edited in place. It indexes every outstanding finding, records the review history, and shows the cumulative cost.
+- The state lives on GitHub: the findings are the review threads themselves, and the incremental starting point and the run history are markers inside the summary comment. There is no database.
 - Reviews are incremental by default: after the first run only the changes since the last review are sent to the model.
-- Numbering, deduplication, rendering and the submit decision are all done by the action. The model only reports findings through a single structured tool call.
+- A review is only submitted when there is something to submit. A push that produces no new findings just refreshes the summary comment.
 
 ## Quick start
 
@@ -56,38 +57,41 @@ permissions:
 
 ## Inputs
 
-| Input                     | Default                          | Description                                                                                                         |
-| ------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `claude-code-oauth-token` | —                                | Claude subscription OAuth token. Either this or `anthropic-api-key` is required.                                    |
-| `anthropic-api-key`       | —                                | Anthropic API key. Either this or `claude-code-oauth-token` is required.                                            |
-| `github-token`            | `${{ github.token }}`            | Token used to read the pull request and post the review.                                                            |
-| `repo`                    | current repository               | `owner/repo`.                                                                                                       |
-| `pr-number`               | number in the event payload      | Pull request number.                                                                                                |
-| `mode`                    | `auto`                           | `auto` reviews the changes since the last review, `full` reviews the whole diff.                                    |
-| `instructions-file`       | `.github/review-instructions.md` | Path to a Markdown file describing what to review. Falls back to the built-in defaults.                             |
-| `exclude`                 | —                                | Additional glob patterns to exclude, one per line. Appended to the built-in defaults.                               |
-| `language`                | `en`                             | Output language for findings and the summary (`en` or `ja`).                                                        |
-| `request-changes-on`      | `critical`                       | Submit as `REQUEST_CHANGES` when a finding at or above this severity exists (`none`, `critical`, `major`, `minor`). |
-| `fail-on-error`           | `true`                           | Fail the action when the review itself could not be completed.                                                      |
-| `fail-on-incomplete`      | `false`                          | Fail the action when files were skipped because the diff exceeded the size limit.                                   |
-| `model`                   | `claude-sonnet-5`                | Claude model to use.                                                                                                |
-| `effort`                  | `high`                           | Reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`).                                                         |
-| `max-retries`             | `3`                              | How many times to retry when the agent fails to report findings.                                                    |
-| `timeout-minutes`         | `8`                              | Wall-clock timeout for a single agent run.                                                                          |
-| `max-cost-usd`            | `5`                              | Budget ceiling for a single agent run.                                                                              |
-| `diff-max-bytes`          | `500000`                         | Maximum total diff size sent to the model.                                                                          |
+| Input                     | Default                          | Description                                                                                                                                                           |
+| ------------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code-oauth-token` | —                                | Claude subscription OAuth token. Either this or `anthropic-api-key` is required.                                                                                      |
+| `anthropic-api-key`       | —                                | Anthropic API key. Either this or `claude-code-oauth-token` is required.                                                                                              |
+| `github-token`            | `${{ github.token }}`            | Token used to read the pull request and post the review.                                                                                                              |
+| `repo`                    | current repository               | `owner/repo`.                                                                                                                                                         |
+| `pr-number`               | number in the event payload      | Pull request number.                                                                                                                                                  |
+| `mode`                    | `auto`                           | `auto` reviews the changes since the last review, `full` reviews the whole diff.                                                                                      |
+| `instructions-file`       | `.github/review-instructions.md` | Path to a Markdown file describing what to review. Falls back to the built-in defaults.                                                                               |
+| `exclude`                 | —                                | Additional glob patterns to exclude, one per line. Appended to the built-in defaults.                                                                                 |
+| `language`                | `en`                             | Output language for findings and the summary (`en` or `ja`).                                                                                                          |
+| `request-changes-on`      | `critical`                       | Submit as `REQUEST_CHANGES` when a finding at or above this severity exists (`none`, `critical`, `major`, `minor`).                                                   |
+| `approve`                 | `false`                          | Submit as `APPROVE` when the pull request has no outstanding findings. See the warning below.                                                                         |
+| `fail-on-error`           | `true`                           | Fail the action when the review itself could not be completed.                                                                                                        |
+| `fail-on-incomplete`      | `false`                          | Fail the action when files were skipped because the diff exceeded the size limit.                                                                                     |
+| `model`                   | `claude-sonnet-5`                | Claude model to use.                                                                                                                                                  |
+| `effort`                  | `high`                           | Reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`).                                                                                                           |
+| `max-retries`             | `3`                              | How many times to retry when the agent fails to report findings.                                                                                                      |
+| `timeout-minutes`         | `8`                              | Wall-clock timeout for a single agent run.                                                                                                                            |
+| `max-cost-usd`            | `5`                              | Budget ceiling for **a single agent run**. With `max-retries: 3` a single job can spend up to three times this. The cumulative spend is shown in the summary comment. |
+| `diff-max-bytes`          | `500000`                         | Maximum total diff size sent to the model.                                                                                                                            |
 
 ## Outputs
 
 | Output             | Description                                                      |
 | ------------------ | ---------------------------------------------------------------- |
 | `status`           | `success` or `failed`                                            |
-| `review-event`     | `COMMENT`, `REQUEST_CHANGES`, or `NONE`                          |
+| `review-event`     | `COMMENT`, `REQUEST_CHANGES`, `APPROVE`, or `NONE`               |
 | `findings-count`   | Number of new findings posted                                    |
 | `critical-count`   | Number of new `critical` findings                                |
 | `major-count`      | Number of new `major` findings                                   |
 | `minor-count`      | Number of new `minor` findings                                   |
 | `incomplete-files` | Number of files skipped because the diff exceeded the size limit |
+| `cost-usd`         | Cost of this run in USD, summed across retries                   |
+| `total-cost-usd`   | Cumulative cost of every review run on this pull request         |
 
 ## Severity
 
@@ -172,7 +176,7 @@ If the file does not exist, these built-in instructions are used instead:
 
 ## Incremental reviews
 
-The action finds its own last review by a marker embedded in the review body, and diffs from that commit to the pull request head. The first run diffs from the base commit.
+The action finds its own summary comment, reads the `reviewed=<sha>` marker inside it, and diffs from that commit to the pull request head. The first run diffs from the base commit. Only a comment authored by the same identity as the token is trusted as the summary comment.
 
 A finding is identified by a hash of `file` + normalized `title`, embedded as an HTML comment at the end of each inline comment. Because the line number is not part of the identity, a finding is not posted twice when later commits shift it to a different line. Findings you have already resolved are **not** re-posted either — resolving a thread is a human decision and the action does not reopen it.
 
@@ -214,9 +218,19 @@ If you want a review to actually block a merge, enforce it with branch protectio
 
 `REQUEST_CHANGES` cannot be submitted on a pull request opened by the same identity as the token. When the pull request author is a bot, the action falls back to `COMMENT` automatically.
 
+## `approve` is not a review
+
+`approve` is off by default. Turn it on and the action submits `APPROVE` when the pull request has no outstanding findings — that is, when every finding it raised has been resolved.
+
+**A bot approval must not be relied on as a branch-protection gate.** Whether a finding counts as outstanding is decided by the resolve button, and the pull request author can press it themselves. If your branch protection requires N approvals and this action's approval satisfies one of them, an author can self-approve by resolving their own threads.
+
+Treating a resolved thread as "handled" is deliberate and matches GitHub's own "Require conversation resolution before merging". It is a convenience signal, not a review.
+
+If the review fails after an approval was submitted, the action dismisses its own approval so the pull request does not stay green on a review that never ran.
+
 ## Fail-closed behaviour
 
-`fail-on-error` (default `true`) fails the job when the review could not be produced at all — timeout, budget exhausted, the model never reported findings, or the API call failed. This exists so a pull request never turns green just because nothing reviewed it. The failure is also posted as a review comment, and that comment is marked so it never becomes the starting point of the next incremental review.
+`fail-on-error` (default `true`) fails the job when the review could not be produced at all — timeout, budget exhausted, the model never reported findings, or the API call failed. This exists so a pull request never turns green just because nothing reviewed it. The failure is shown as a banner at the top of the summary comment, and `reviewed=<sha>` is left where it was, so the range that failed is reviewed again on the next run. If the action had previously approved the pull request, that approval is dismissed.
 
 `fail-on-incomplete` (default `false`) fails the job when files were dropped because the diff exceeded `diff-max-bytes`. Those files are always listed in the summary regardless of this setting.
 
