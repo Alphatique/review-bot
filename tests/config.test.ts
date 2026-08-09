@@ -103,16 +103,19 @@ describe('loadConfig', () => {
 describe('approve', () => {
 	test('既定は false', () => {
 		const result = loadConfig(VALID);
-		expect(result.ok && result.value.approve).toBe(false);
+		if (!result.ok) throw new Error('expected ok');
+		expect(result.value.approve).toBe(false);
 	});
 
 	test('true を指定すると有効になる', () => {
 		const result = loadConfig({ ...VALID, approve: 'true' });
-		expect(result.ok && result.value.approve).toBe(true);
+		if (!result.ok) throw new Error('expected ok');
+		expect(result.value.approve).toBe(true);
 	});
 
 	test('不正な値は false として扱う', () => {
 		const result = loadConfig({ ...VALID, approve: 'maybe' });
-		expect(result.ok && result.value.approve).toBe(false);
+		if (!result.ok) throw new Error('expected ok');
+		expect(result.value.approve).toBe(false);
 	});
 });
