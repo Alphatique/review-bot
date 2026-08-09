@@ -806,11 +806,15 @@ git commit -m "feat(decision): APPROVE と NONE を追加し verdict のゲー�
   - `renderSticky(input: StickyInput): string`
   - `renderInlineComment(finding: KeyedFinding, lang: Language): string`（既存のまま）
 
-`renderSummary` / `renderFailureSummary` は削除する。`SummaryInput` も削除する。
+**このタスクは追加のみ。** `renderSummary` / `renderFailureSummary` / `SummaryInput` は**そのまま残す**。削除は Task 8 で `orchestrate.ts` が使わなくなってから行う。こうすることで、このタスクの中間コミットに暫定シムもスキップされたテストも生まれない。
 
-- [ ] **Step 1: `i18n.ts` を書き換える**
+`i18n.ts` の `Messages` は差し替えるため、旧 `renderSummary` / `renderFailureSummary` が参照していた文言キー（`summaryHeading`, `noFindings`, `findingsCount`, `incrementalNote`, `fullNote`, `unlocatableHeading`, `unlocatableNote`, `failureHeading`, `failureBody`, `instructionSource`）は **`Messages` に残したまま新しいキーを足す**。Task 8 で旧関数と一緒に消す。
 
-`src/core/i18n.ts` を丸ごと次の内容にする。
+- [ ] **Step 1: `i18n.ts` に新しい文言を足す**
+
+`src/core/i18n.ts` を次の内容にする。**ただし既存の `Messages` のキーと `EN` / `JA` の値はすべて残したうえで**、以下のキーを追加する形にすること（旧 `renderSummary` / `renderFailureSummary` がまだ参照しているため）。残すキーは `summaryHeading` / `noFindings` / `findingsCount` / `incrementalNote` / `fullNote` / `unlocatableHeading` / `unlocatableNote` / `oversizedWarning` / `failureHeading` / `failureBody` / `errorDetails` / `instructionSource` の 12 個。`oversizedWarning` と `errorDetails` は新旧で共用するので重複させない。
+
+Task 8 で旧関数を消すときに、残した 10 個（`oversizedWarning` と `errorDetails` を除く）も一緒に消す。
 
 ```ts
 export const LANGUAGES = ['en', 'ja'] as const;
@@ -1369,64 +1373,16 @@ function renderHistory(
 Run: `bun test tests/core/render.test.ts`
 Expected: PASS
 
-- [ ] **Step 6: 型チェック（orchestrate が壊れる）**
-
-Run: `bun run typecheck`
-Expected: `src/orchestrate.ts` が `renderSummary` / `renderFailureSummary` を解決できない型エラー。**想定どおり**。
-
-暫定で `src/orchestrate.ts` をコンパイル可能にする。`renderSummary` を呼んでいる箇所（`const body = renderSummary({...})`）を次に差し替える。
-
-```ts
-		const body = renderSticky({
-			lang: config.language,
-			board: { outstanding: [], resolved: [], counts: { critical: 0, major: 0, minor: 0 } },
-			runs: [],
-			reviewedSha: pr.headSha,
-			latest: null,
-			failure: null,
-			oversizedFiles: analysis.oversizedFiles,
-		});
-```
-
-`renderFailureSummary` を呼んでいる箇所（`failure` 関数の中）を次に差し替える。
-
-```ts
-			await github.createReview({
-				body: renderSticky({
-					lang: config.language,
-					board: { outstanding: [], resolved: [], counts: { critical: 0, major: 0, minor: 0 } },
-					runs: [],
-					reviewedSha: await safeHeadSha(github),
-					latest: null,
-					failure: error,
-					oversizedFiles: [],
-				}),
-				event: 'COMMENT',
-				commitId: await safeHeadSha(github),
-				comments: [],
-			});
-```
-
-import を `renderInlineComment, renderSticky` に差し替える。Task 8 で正式なフローに置き換わる暫定コード。
-
-- [ ] **Step 7: 壊れる orchestrate テストを一時的に skip**
-
-`tests/orchestrate.test.ts` の次の 3 件は Task 8 で書き直す。`test` を `test.skip` に変える。
-
-- `コメント可能行でない指摘はサマリへ落とす`
-- `line が null の指摘はサマリへ落とす`
-- `リトライを使い切ったら失敗通知を投稿する`
-
-- [ ] **Step 8: 型・lint・全テスト**
+- [ ] **Step 6: 型・lint・全テスト**
 
 Run: `bun run typecheck && bun run lint && bun test`
-Expected: 全て PASS（3 件 skip）
+Expected: 全て PASS。`orchestrate.ts` は旧 `renderSummary` / `renderFailureSummary` を使い続けているので壊れない。既存の orchestrate テストも全て通ったまま。スキップするテストは 1 件も無い。
 
-- [ ] **Step 9: コミット**
+- [ ] **Step 7: コミット**
 
 ```bash
-git add src/core/i18n.ts src/core/render.ts tests/core/render.test.ts src/orchestrate.ts tests/orchestrate.test.ts
-git commit -m "feat(render): sticky サマリーの描画に置き換える"
+git add src/core/i18n.ts src/core/render.ts tests/core/render.test.ts
+git commit -m "feat(render): sticky サマリーの描画を追加"
 ```
 
 ---
@@ -2273,6 +2229,21 @@ git commit -m "feat(config): approve input とコスト output を追加"
 		expect(reviews[0]!.comments[0]!.line).toBeNull();
 	});
 
+	test('差分に無いファイルの指摘は破棄する', async () => {
+		const { deps, reviews } = setup({
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ file: 'src/other.ts' })],
+					metrics: { costUsd: 0, durationMs: 0 },
+				},
+			],
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(reviews).toHaveLength(0);
+		expect(result.findingsCount).toBe(0);
+	});
+
 	test('指摘ゼロなら Review を作らず sticky だけ更新する', async () => {
 		const { deps, reviews, stickyWrites } = setup();
 		const result = await runReview(deps, CONFIG);
@@ -2767,23 +2738,29 @@ export async function runReview(
 	const { toPost } = dedupe(outcome.findings, existing);
 
 	const comments: InlineCommentInput[] = [];
+	const posted: KeyedFinding[] = [];
 	for (const finding of toPost) {
+		// 差分に無いファイルは投稿先が無い。プロンプトで禁止している（Task 10）が、
+		// それでも出てきた場合は破棄してログに残す。
+		if (!analysis.commentableLines.has(finding.file)) {
+			log(`dropped a finding outside the diff: ${finding.file}`);
+			continue;
+		}
 		// 行が差分内に無ければファイル単位コメントに落とす。スレッドは立つので
 		// サマリーの索引には載る。
-		const line =
-			finding.line !== null &&
-			isCommentable(analysis, finding.file, finding.line)
-				? finding.line
-				: null;
+		const line = isCommentable(analysis, finding.file, finding.line ?? -1)
+			? finding.line
+			: null;
 		comments.push({
 			path: finding.file,
 			line,
 			body: renderInlineComment(finding, config.language),
 		});
+		posted.push(finding);
 	}
 
 	const event = decideEvent({
-		newFindings: toPost,
+		newFindings: posted,
 		existing,
 		threshold: config.requestChangesOn,
 		canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
@@ -2801,7 +2778,7 @@ export async function runReview(
 
 	// 投稿後に取り直す。サマリーを常に GitHub の現状から組み立てるため。
 	const threads = event === 'NONE' ? existing : await github.listThreads();
-	const runs = record(event, toPost.length);
+	const runs = record(event, posted.length);
 
 	await writeSticky({
 		reviewedSha: pr.headSha,
@@ -2813,7 +2790,7 @@ export async function runReview(
 	});
 
 	const counts = emptyCounts();
-	for (const finding of toPost) counts[finding.severity] += 1;
+	for (const finding of posted) counts[finding.severity] += 1;
 
 	log(`posted ${comments.length} comment(s), event=${event}`);
 
@@ -2821,7 +2798,7 @@ export async function runReview(
 		status: 'success',
 		event,
 		counts,
-		findingsCount: toPost.length,
+		findingsCount: posted.length,
 		incompleteFiles: analysis.oversizedFiles.length,
 		costUsd: spent.costUsd,
 		totalCostUsd: totalCostUsd(runs),
@@ -2833,8 +2810,6 @@ function describe(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 ```
-
-`KeyedFinding` は Task 10 で `posted` 配列の型として使う。Task 8 の時点で未使用なら import を消し、Task 10 で戻すこと。
 
 **注意:** `createReview` の `body` を空文字にすると GitHub が 422 を返す可能性がある。`event: 'COMMENT'` は body 必須。実装時に実 API で確認できないため、**安全側として 1 行のポインタを入れる**。
 
@@ -2860,11 +2835,19 @@ function describe(error: unknown): string {
 	reviewPointer: 'この PR の全体状況はレビューサマリーコメントを参照してください。',
 ```
 
-- [ ] **Step 4: `marker.ts` から不要になったものを消す**
+- [ ] **Step 4: 使われなくなった旧コードを消す**
 
-`SUMMARY_MARKER` / `FAILURE_MARKER` / `hasSummaryMarker` / `hasFailureMarker` と、それらを参照する `tests/core/marker.test.ts` の `describe('summary marker')` / `describe('failure marker')` を削除する。
+`orchestrate.ts` がもう参照していないものを、まとめて削除する。
 
-Run: `grep -rn "SUMMARY_MARKER\|FAILURE_MARKER\|hasSummaryMarker\|hasFailureMarker" src tests`
+1. `src/core/marker.ts` から `SUMMARY_MARKER` / `FAILURE_MARKER` / `hasSummaryMarker` / `hasFailureMarker`
+2. `tests/core/marker.test.ts` から `describe('summary marker')` / `describe('failure marker')`
+3. `src/core/render.ts` から `renderSummary` / `renderFailureSummary` / `SummaryInput` と、それらだけが使っていたヘルパ（`renderCounts` / `sortBySeverity`）
+4. `src/core/i18n.ts` の `Messages` から旧キー 10 個 — `summaryHeading` / `noFindings` / `findingsCount` / `incrementalNote` / `fullNote` / `unlocatableHeading` / `unlocatableNote` / `failureHeading` / `failureBody` / `instructionSource` — と `EN` / `JA` の対応する値。`oversizedWarning` と `errorDetails` は新しい描画でも使うので**残す**
+
+Run:
+```bash
+grep -rn "SUMMARY_MARKER\|FAILURE_MARKER\|hasSummaryMarker\|hasFailureMarker\|renderSummary\|renderFailureSummary\|SummaryInput\|instructionSource" src tests
+```
 Expected: 出力なし
 
 - [ ] **Step 5: テストが通ることを確認**
@@ -3050,65 +3033,18 @@ Expected: FAIL
 Run: `bun test tests/core/prompt.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 差分外ファイルの指摘を破棄する**
+破棄側の実装とテストは Task 8 で入っている（`analysis.commentableLines.has(finding.file)` で弾き、`posted` にだけ積む）。このタスクはモデル側の入口を塞ぐだけ。
 
-`src/orchestrate.ts` のコメント組み立てループを次に変える。
-
-```ts
-	const comments: InlineCommentInput[] = [];
-	const posted: KeyedFinding[] = [];
-	for (const finding of toPost) {
-		// 差分に無いファイルは投稿先が無い。プロンプトで禁止しているが、
-		// 出てきた場合は破棄してログに残す。
-		if (!analysis.commentableLines.has(finding.file)) {
-			log(`dropped a finding outside the diff: ${finding.file}`);
-			continue;
-		}
-		const line =
-			finding.line !== null &&
-			isCommentable(analysis, finding.file, finding.line)
-				? finding.line
-				: null;
-		comments.push({
-			path: finding.file,
-			line,
-			body: renderInlineComment(finding, config.language),
-		});
-		posted.push(finding);
-	}
-```
-
-以降 `toPost` を使っていた `decideEvent` / `counts` / `findingsCount` / `record` を **`posted` に差し替える**。破棄した指摘を「投稿した」と数えないため。
-
-対応するテストを `tests/orchestrate.test.ts` に足す。
-
-```ts
-	test('差分に無いファイルの指摘は破棄する', async () => {
-		const { deps, reviews } = setup({
-			outcomes: [
-				{
-					ok: true,
-					findings: [finding({ file: 'src/other.ts' })],
-					metrics: { costUsd: 0, durationMs: 0 },
-				},
-			],
-		});
-		const result = await runReview(deps, CONFIG);
-		expect(reviews).toHaveLength(0);
-		expect(result.findingsCount).toBe(0);
-	});
-```
-
-- [ ] **Step 6: 型・lint・全テスト**
+- [ ] **Step 5: 型・lint・全テスト**
 
 Run: `bun run typecheck && bun run lint && bun test`
 Expected: 全て PASS
 
-- [ ] **Step 7: コミット**
+- [ ] **Step 6: コミット**
 
 ```bash
-git add src/core/prompt.ts src/orchestrate.ts tests
-git commit -m "feat(prompt): 差分外のファイルへの指摘を禁止し破棄する"
+git add src/core/prompt.ts tests/core/prompt.test.ts
+git commit -m "feat(prompt): 差分外のファイルへの指摘を禁止する"
 ```
 
 ---
