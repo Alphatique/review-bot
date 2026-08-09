@@ -35,7 +35,7 @@ function sortForDisplay(threads: readonly ThreadInfo[]): ThreadInfo[] {
 	return [...threads].toSorted((a, b) => {
 		const bySeverity = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
 		if (bySeverity !== 0) return bySeverity;
-		const byFile = a.file.localeCompare(b.file);
+		const byFile = a.file < b.file ? -1 : a.file > b.file ? 1 : 0;
 		if (byFile !== 0) return byFile;
 		return (a.line ?? 0) - (b.line ?? 0);
 	});
