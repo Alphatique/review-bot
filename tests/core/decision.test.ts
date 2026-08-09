@@ -10,6 +10,7 @@ function input(overrides: Partial<DecisionInput> = {}): DecisionInput {
 		canSubmitVerdict: true,
 		approve: false,
 		currentVerdict: null,
+		hasDiscardedFindings: false,
 		...overrides,
 	};
 }
@@ -131,7 +132,10 @@ describe('decideEvent', () => {
 	test('自分の判定が dismiss されていれば再提出する', () => {
 		expect(
 			decideEvent(
-				input({ existing: [existing('critical', false)], currentVerdict: null }),
+				input({
+					existing: [existing('critical', false)],
+					currentVerdict: null,
+				}),
 			),
 		).toBe('REQUEST_CHANGES');
 	});
@@ -181,5 +185,17 @@ describe('decideEvent', () => {
 		expect(decideEvent(input({ approve: true, currentVerdict: null }))).toBe(
 			'APPROVE',
 		);
+	});
+
+	test('未解決ゼロでも破棄した指摘があれば APPROVE しない', () => {
+		expect(
+			decideEvent(input({ approve: true, hasDiscardedFindings: true })),
+		).toBe('NONE');
+	});
+
+	test('未解決ゼロで破棄も無ければ APPROVE する', () => {
+		expect(
+			decideEvent(input({ approve: true, hasDiscardedFindings: false })),
+		).toBe('APPROVE');
 	});
 });

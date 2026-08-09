@@ -32,6 +32,13 @@ export interface DecisionInput {
 	approve: boolean;
 	/** GitHub 上で生きている自分の判定。COMMENTED は判定ではないので含めない。 */
 	currentVerdict: OwnVerdictState | null;
+	/**
+	 * 差分に無いファイルを狙っていたため破棄した指摘があるか。
+	 * 破棄はこの関数に渡る前（呼び出し側）で起きるので outstandingAfter には
+	 * 反映されない。0 件になっても、それは「何も無かった」のではなく
+	 * 「見なかったことにした」だけなので、APPROVE はしない。
+	 */
+	hasDiscardedFindings: boolean;
 }
 
 export function decideEvent(input: DecisionInput): EventDecision {
@@ -45,7 +52,8 @@ export function decideEvent(input: DecisionInput): EventDecision {
 		input.approve &&
 		input.canSubmitVerdict &&
 		outstandingAfter === 0 &&
-		input.currentVerdict !== 'APPROVED'
+		input.currentVerdict !== 'APPROVED' &&
+		!input.hasDiscardedFindings
 	) {
 		return 'APPROVE';
 	}

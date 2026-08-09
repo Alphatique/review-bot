@@ -355,6 +355,7 @@ export async function runReview(
 			canSubmitVerdict,
 			approve: config.approve,
 			currentVerdict,
+			hasDiscardedFindings: droppedFiles.size > 0,
 		});
 
 		if (event !== 'NONE') {
