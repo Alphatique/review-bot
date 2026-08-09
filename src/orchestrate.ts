@@ -145,12 +145,13 @@ export async function runReview(
 		}
 	};
 
-	const latestRun = (): LatestRun => ({
+	const latestRun = (succeeded: boolean): LatestRun => ({
 		model: config.model,
 		effort: config.effort,
 		seconds: Math.round(spent.durationMs / 1000),
 		costUsd: spent.costUsd,
 		attempts: Math.max(attempts, 1),
+		succeeded,
 	});
 
 	const record = (
@@ -203,7 +204,8 @@ export async function runReview(
 			board,
 			// attempts が 0 のままなら agent は一度も起動していない。それでも
 			// latestRun() を呼ぶと「コスト $0.00 で実行した」ように読めてしまう。
-			latest: attempts > 0 ? latestRun() : null,
+			// succeeded は常に false — abort() に来る時点でこの実行は失敗している。
+			latest: attempts > 0 ? latestRun(false) : null,
 			failure: { message: error, sha: pr.headSha },
 			// abort() では指摘の組み立てまで到達しないので破棄は発生しない。
 			droppedFiles: [],
@@ -375,7 +377,7 @@ export async function runReview(
 			reviewedSha: pr.headSha,
 			runs,
 			board: buildBoard(threads),
-			latest: latestRun(),
+			latest: latestRun(true),
 			failure: null,
 			droppedFiles: [...droppedFiles],
 		});

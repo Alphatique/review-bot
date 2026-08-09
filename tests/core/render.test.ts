@@ -235,6 +235,7 @@ describe('renderSticky', () => {
 					seconds: 42,
 					costUsd: 0.18,
 					attempts: 1,
+					succeeded: true,
 				},
 			}),
 		);
@@ -243,7 +244,7 @@ describe('renderSticky', () => {
 		expect(body).not.toContain('回目で成功');
 	});
 
-	test('リトライした場合は attempt 数を添える', () => {
+	test('リトライの末に成功した場合は「N 回目で成功」を添える', () => {
 		const body = renderSticky(
 			input({
 				latest: {
@@ -252,10 +253,32 @@ describe('renderSticky', () => {
 					seconds: 90,
 					costUsd: 0.4,
 					attempts: 3,
+					succeeded: true,
 				},
 			}),
 		);
 		expect(body).toContain('（3 回目で成功）');
+	});
+
+	test('リトライを使い切って失敗した場合は「成功」と書かない', () => {
+		// abort() はリトライを使い切った失敗でも latestRun() を渡す。
+		// succeeded: false のとき「3 回目で成功」と表示すると、直後に出る
+		// 失敗バナーと矛盾したまま読める。
+		const body = renderSticky(
+			input({
+				latest: {
+					model: 'm',
+					effort: 'high',
+					seconds: 90,
+					costUsd: 0.3,
+					attempts: 3,
+					succeeded: false,
+				},
+				failure: { message: 'boom', sha: 'head' },
+			}),
+		);
+		expect(body).toContain('（3 回試行）');
+		expect(body).not.toContain('回目で成功');
 	});
 
 	test('失敗バナーを先頭に出す', () => {

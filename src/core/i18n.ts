@@ -8,6 +8,12 @@ export interface LatestRun {
 	seconds: number;
 	costUsd: number;
 	attempts: number;
+	/**
+	 * この実行が最終的に成功したか。false のとき attempts > 1 は
+	 * 「リトライを使い切った」ことを意味するので、runInfoLine は
+	 * 「N 回目で成功」ではなく「N 回試行」と表示を変える。
+	 */
+	succeeded: boolean;
 }
 
 export interface Messages {
@@ -37,6 +43,25 @@ export interface Messages {
 	droppedWarning: (files: readonly string[]) => string;
 }
 
+/**
+ * attempts === 1 なら何回試したかは自明なので付けない。attempts > 1 のとき、
+ * 成功したのか（succeeded）失敗したのかで意味が逆になる。「3 回目で成功」を
+ * 失敗した実行に出すと、直後の失敗バナーと矛盾したまま読める。
+ */
+function attemptSuffixEn(latest: LatestRun): string {
+	if (latest.attempts <= 1) return '';
+	return latest.succeeded
+		? ` (succeeded on attempt ${latest.attempts})`
+		: ` (${latest.attempts} attempts)`;
+}
+
+function attemptSuffixJa(latest: LatestRun): string {
+	if (latest.attempts <= 1) return '';
+	return latest.succeeded
+		? `（${latest.attempts} 回目で成功）`
+		: `（${latest.attempts} 回試行）`;
+}
+
 const EN: Messages = {
 	heading: '## 🤖 Code Review',
 	reviewedUpTo: sha => `Reviewed up to \`${sha}\``,
@@ -52,9 +77,7 @@ const EN: Messages = {
 	eventFailed: '⚠️ failed',
 	runInfoSummary: 'Run details',
 	runInfoLine: latest =>
-		`This run: \`${latest.model}\` · effort \`${latest.effort}\` · ${latest.seconds}s · $${latest.costUsd.toFixed(2)}${
-			latest.attempts > 1 ? ` (succeeded on attempt ${latest.attempts})` : ''
-		}`,
+		`This run: \`${latest.model}\` · effort \`${latest.effort}\` · ${latest.seconds}s · $${latest.costUsd.toFixed(2)}${attemptSuffixEn(latest)}`,
 	failureBanner: sha =>
 		`> ⚠️ The automated review could not be completed. \`${sha}\` has **not** been reviewed. Re-run the workflow or check the job logs.`,
 	outdatedSuffix: '(outdated)',
@@ -88,9 +111,7 @@ const JA: Messages = {
 	eventFailed: '⚠️ 失敗',
 	runInfoSummary: '実行情報',
 	runInfoLine: latest =>
-		`今回: \`${latest.model}\` · effort \`${latest.effort}\` · ${latest.seconds}s · $${latest.costUsd.toFixed(2)}${
-			latest.attempts > 1 ? `（${latest.attempts} 回目で成功）` : ''
-		}`,
+		`今回: \`${latest.model}\` · effort \`${latest.effort}\` · ${latest.seconds}s · $${latest.costUsd.toFixed(2)}${attemptSuffixJa(latest)}`,
 	failureBanner: sha =>
 		`> ⚠️ 自動レビューを完了できませんでした。\`${sha}\` は未レビューです。ワークフローを再実行するか、ジョブのログを確認してください。`,
 	outdatedSuffix: '(outdated)',
