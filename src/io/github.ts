@@ -98,6 +98,16 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
 	}
 }`;
 
+/**
+ * Octokit のエラーは REST の失敗時 `status` に HTTP ステータスコードを持つ。
+ * GITHUB_TOKEN（インストールトークン）で getAuthenticated を叩いたときに
+ * 返るのがこの形に限られる。
+ */
+function isNotFoundOrForbidden(error: unknown): boolean {
+	const status = (error as { status?: unknown } | null | undefined)?.status;
+	return status === 403 || status === 404;
+}
+
 export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 	const octokit = getOctokit(options.token);
 	const { owner, repo, prNumber } = options;
@@ -105,8 +115,8 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 	/**
 	 * このトークンが名乗る identity。sticky を騙るコメントを他人が投稿できると
 	 * reviewed を head まで進められてレビューを丸ごとスキップさせられるため、
-	 * 作成者を必ず確認する。GITHUB_TOKEN では getAuthenticated が 403 になるので
-	 * その場合は Bot 判定にフォールバックする。
+	 * 作成者を必ず確認する。GITHUB_TOKEN では getAuthenticated が 403/404 に
+	 * なるので、その場合だけ Bot 判定にフォールバックする。
 	 */
 	let selfLogin: string | null | undefined;
 	const resolveSelfLogin = async (): Promise<string | null> => {
@@ -115,8 +125,13 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 			const { data } = await octokit.rest.users.getAuthenticated();
 			selfLogin = data.login;
 		} catch (error) {
-			// identity を確定できないと Bot 判定に落ちる。無言だと
-			// sticky が毎回増える形で劣化するので、必ず記録する。
+			// GITHUB_TOKEN（インストールトークン）は getAuthenticated が 403/404
+			// になる、というのが Bot 判定へのフォールバックを許してよい唯一の形。
+			// それ以外（rate limit や 5xx などの一時的な障害）を「identity 無し」
+			// と誤認すると、PAT 運用で sticky を見失い、findSticky が既存の
+			// sticky を見つけられず二重にコメントを作ってしまう。呼び出し元
+			// （findSticky / getOwnVerdict）に投げ返し、失敗として扱わせる。
+			if (!isNotFoundOrForbidden(error)) throw error;
 			options.log(
 				`could not resolve the token identity, falling back to bot detection: ${
 					error instanceof Error ? error.message : String(error)
