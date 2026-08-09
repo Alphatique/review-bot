@@ -73,6 +73,14 @@ describe('renderSticky', () => {
 		);
 	});
 
+	test('reviewedSha は表示だけ 7 桁に短縮し、マーカーはフルの sha を保つ', () => {
+		const full = '0123456789abcdef0123456789abcdef01234567';
+		const body = renderSticky(input({ reviewedSha: full }));
+		expect(body).toContain('`0123456` までレビュー済み');
+		expect(body).toContain(`<!-- review-bot:v1 sticky reviewed=${full} -->`);
+		expect(body).not.toContain(`\`${full}\``);
+	});
+
 	test('未解決ゼロなら見出しを出さず「ありません」と書く', () => {
 		const body = renderSticky(input());
 		expect(body).not.toContain('### 未解決の指摘');
@@ -175,6 +183,14 @@ describe('renderSticky', () => {
 		);
 		expect(body).toContain('| $0.18 |');
 		expect(body).toContain('| $0.31 |');
+	});
+
+	test('履歴テーブルの commit 列は表示だけ 7 桁に短縮し、run マーカーはフルの sha を保つ', () => {
+		const full = 'fedcba9876543210fedcba9876543210fedcba98';
+		const body = renderSticky(input({ runs: [run({ commit: full })] }));
+		expect(body).toContain(`| \`${full.slice(0, 7)}\` |`);
+		expect(body).toContain(`run commit=${full}`);
+		expect(parseRunMarkers(body)[0]!.commit).toBe(full);
 	});
 
 	test('FAILED 行は判定に失敗を出し、新規件数を — にする', () => {

@@ -16,6 +16,15 @@ const SEVERITY_EMOJI: Record<Severity, string> = {
 	minor: '🟡',
 };
 
+/**
+ * 表示専用の短縮。マーカーの reviewed= / commit= は state そのものなので
+ * ここでは触らない — 短縮した値を書いてしまうと getDiff の呼び出しに
+ * 使う commit が変わってしまう。
+ */
+function shortSha(sha: string): string {
+	return sha.slice(0, 7);
+}
+
 const EVENT_LABEL: Record<RunRecord['event'], string | null> = {
 	COMMENT: '💬 COMMENT',
 	REQUEST_CHANGES: '🔴 REQUEST_CHANGES',
@@ -135,7 +144,7 @@ function renderStatusLine(
 	input: StickyInput,
 	m: ReturnType<typeof messages>,
 ): string {
-	const parts = [m.reviewedUpTo(input.reviewedSha)];
+	const parts = [m.reviewedUpTo(shortSha(input.reviewedSha))];
 	const total = input.board.outstanding.length;
 
 	if (total === 0) {
@@ -213,7 +222,7 @@ function renderHistory(
 			run.event === 'FAILED' || run.event === 'NONE'
 				? '—'
 				: String(run.newFindings);
-		return `| \`${run.commit}\` | ${range} | ${newCount} | ${verdict} | $${run.costUsd.toFixed(2)} |`;
+		return `| \`${shortSha(run.commit)}\` | ${range} | ${newCount} | ${verdict} | $${run.costUsd.toFixed(2)} |`;
 	});
 
 	return [
