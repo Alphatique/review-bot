@@ -1,16 +1,23 @@
 import type { Config } from './config';
-import { decideEvent, type ReviewEvent } from './core/decision';
+import { buildBoard, type Board } from './core/board';
+import { decideEvent, type EventDecision } from './core/decision';
 import { dedupe, type KeyedFinding } from './core/dedupe';
 import { analyzeDiff, isCommentable } from './core/diff';
-import { parseStickyMarker } from './core/marker';
-import { buildPrompt, DEFAULT_INSTRUCTIONS } from './core/prompt';
+import { messages, type LatestRun } from './core/i18n';
 import {
-	renderFailureSummary,
-	renderInlineComment,
-	renderSummary,
-} from './core/render';
+	parseRunMarkers,
+	parseStickyMarker,
+	type RunRecord,
+	totalCostUsd,
+} from './core/marker';
+import { buildPrompt, DEFAULT_INSTRUCTIONS } from './core/prompt';
+import { renderInlineComment, renderSticky } from './core/render';
 import type { Severity } from './core/schema';
-import { type AgentOutcome, SUBMIT_TOOL_NAME } from './io/agent';
+import {
+	type AgentMetrics,
+	type AgentOutcome,
+	SUBMIT_TOOL_NAME,
+} from './io/agent';
 import type {
 	GitHubClient,
 	InlineCommentInput,
@@ -31,7 +38,7 @@ export interface OrchestrateDeps {
 
 export interface RunResult {
 	status: 'success' | 'failed';
-	event: ReviewEvent | 'NONE';
+	event: EventDecision;
 	counts: Record<Severity, number>;
 	findingsCount: number;
 	incompleteFiles: number;
@@ -43,6 +50,9 @@ export interface RunResult {
 }
 
 const BOT_AUTHOR_SUFFIX = '[bot]';
+
+const DISMISS_MESSAGE =
+	'The automated review could not be completed, so this approval is no longer valid.';
 
 export async function runReview(
 	deps: OrchestrateDeps,
@@ -56,57 +66,156 @@ export async function runReview(
 		minor: 0,
 	});
 
-	const aborted = (error: string): RunResult => ({
-		status: 'failed',
-		event: 'NONE',
-		counts: emptyCounts(),
-		findingsCount: 0,
-		incompleteFiles: 0,
-		costUsd: 0,
-		totalCostUsd: 0,
-		error,
-	});
-
-	const failure = async (error: string): Promise<RunResult> => {
-		log(`review failed: ${error}`);
-		try {
-			await github.createReview({
-				body: renderFailureSummary(error, config.language),
-				event: 'COMMENT',
-				commitId: await safeHeadSha(github),
-				comments: [],
-			});
-		} catch (postError) {
-			log(`could not post failure notice: ${describe(postError)}`);
-		}
-		return aborted(error);
-	};
-
 	let pr: PullRequestInfo;
 	try {
 		pr = await github.getPullRequest();
 	} catch (error) {
-		return failure(`could not fetch pull request: ${describe(error)}`);
+		const message = `could not fetch pull request: ${describe(error)}`;
+		log(message);
+		return {
+			status: 'failed',
+			event: 'NONE',
+			counts: emptyCounts(),
+			findingsCount: 0,
+			incompleteFiles: 0,
+			costUsd: 0,
+			totalCostUsd: 0,
+			error: message,
+		};
 	}
 
 	if (pr.isFork) {
 		// fork PR では GITHUB_TOKEN が read-only になり投稿できない。
-		// 失敗通知すら投稿できないので createReview を試みない。
+		// 失敗通知すら投稿できないので API 呼び出しを試みない。
 		const error =
 			'this pull request comes from a fork; GITHUB_TOKEN is read-only and the review cannot be posted';
 		log(error);
-		return aborted(error);
+		return {
+			status: 'failed',
+			event: 'NONE',
+			counts: emptyCounts(),
+			findingsCount: 0,
+			incompleteFiles: 0,
+			costUsd: 0,
+			totalCostUsd: 0,
+			error,
+		};
 	}
 
+	// 失敗経路と成功経路で共有する状態。abort() が途中までの値を使って
+	// sticky を書けるよう、try の外で持つ。
+	let sticky: { commentId: number; body: string } | null = null;
+	let stickyResolved = false;
+	let previousRuns: RunRecord[] = [];
+	let lastReviewed: string | null = null;
+	let oversizedFiles: readonly string[] = [];
+	const spent: AgentMetrics = { costUsd: 0, durationMs: 0 };
+	let attempts = 0;
+
+	/** sticky を書く。失敗してもレビュー自体は落とさない。 */
+	const writeSticky = async (input: {
+		reviewedSha: string;
+		runs: readonly RunRecord[];
+		board: Board;
+		latest: LatestRun | null;
+		failure: string | null;
+	}): Promise<void> => {
+		// findSticky に失敗していると既存コメントの id が分からない。ここで
+		// 新規作成すると sticky が二重になるので、何もせず記録だけ残す。
+		if (!stickyResolved) {
+			log('skipped the summary comment: the existing one could not be located');
+			return;
+		}
+		try {
+			await github.upsertSticky({
+				commentId: sticky?.commentId ?? null,
+				body: renderSticky({ lang: config.language, oversizedFiles, ...input }),
+			});
+		} catch (error) {
+			// reviewed が進まないので次回同じ範囲を再レビューするが、
+			// dedupe があるので二重投稿にはならない。安全側に倒れる。
+			log(`could not update the summary comment: ${describe(error)}`);
+		}
+	};
+
+	const latestRun = (): LatestRun => ({
+		model: config.model,
+		effort: config.effort,
+		seconds: Math.round(spent.durationMs / 1000),
+		costUsd: spent.costUsd,
+		attempts: Math.max(attempts, 1),
+	});
+
+	const record = (
+		event: RunRecord['event'],
+		newFindings: number,
+	): RunRecord[] => [
+		...previousRuns,
+		{
+			commit: pr.headSha,
+			mode: config.mode,
+			newFindings,
+			event,
+			costUsd: spent.costUsd,
+			seconds: Math.round(spent.durationMs / 1000),
+			attempts: Math.max(attempts, 1),
+			model: config.model,
+			effort: config.effort,
+		},
+	];
+
+	/** 失敗を sticky に残して RunResult を返す共通経路。 */
+	const abort = async (error: string): Promise<RunResult> => {
+		log(`review failed: ${error}`);
+		const runs = record('FAILED', 0);
+
+		// 古い APPROVE が残ると PR が緑に見える。fail-on-error が防ごうとしている
+		// 状況そのものなので取り下げる。
+		try {
+			await github.dismissOwnApproval(DISMISS_MESSAGE);
+		} catch (dismissError) {
+			log(`could not dismiss the stale approval: ${describe(dismissError)}`);
+		}
+
+		// スレッド取得も失敗しうる。バナーだけでも残す方が無言より良い。
+		let board = buildBoard([]);
+		try {
+			board = buildBoard(await github.listThreads());
+		} catch (threadError) {
+			log(`could not list review threads: ${describe(threadError)}`);
+		}
+
+		await writeSticky({
+			// 失敗した範囲を二度とレビューしないことになるので reviewed は進めない。
+			reviewedSha: lastReviewed ?? pr.baseSha,
+			runs,
+			board,
+			latest: latestRun(),
+			failure: error,
+		});
+
+		return {
+			status: 'failed',
+			event: 'NONE',
+			counts: emptyCounts(),
+			findingsCount: 0,
+			incompleteFiles: oversizedFiles.length,
+			costUsd: spent.costUsd,
+			totalCostUsd: totalCostUsd(runs),
+			error,
+		};
+	};
+
 	try {
-		// TODO(Task 8): sticky から前回レビュー地点を読む経路は暫定。
-		// 本来は findSticky の結果を board 組み立てや upsert にも使い回すべきだが、
-		// この段階では getLastReviewedCommit の代替として最小限差し替えるだけに留める。
-		const sticky = config.mode === 'full' ? null : await github.findSticky();
-		const lastReviewed = sticky
+		sticky = await github.findSticky();
+		stickyResolved = true;
+		previousRuns = sticky ? parseRunMarkers(sticky.body) : [];
+		lastReviewed = sticky
 			? (parseStickyMarker(sticky.body)?.reviewed ?? null)
 			: null;
-		const from = lastReviewed ?? pr.baseSha;
+
+		const from =
+			config.mode === 'full' ? pr.baseSha : (lastReviewed ?? pr.baseSha);
 		log(`reviewing ${from}...${pr.headSha} (mode=${config.mode})`);
 
 		const rawDiff = await github.getDiff(from, pr.headSha);
@@ -114,17 +223,25 @@ export async function runReview(
 			exclude: config.exclude,
 			maxBytes: config.diffMaxBytes,
 		});
+		oversizedFiles = analysis.oversizedFiles;
 
 		if (analysis.text.trim() === '') {
 			log('no reviewable changes');
+			await writeSticky({
+				reviewedSha: pr.headSha,
+				runs: previousRuns,
+				board: buildBoard(await github.listThreads()),
+				latest: null,
+				failure: null,
+			});
 			return {
 				status: 'success',
 				event: 'NONE',
 				counts: emptyCounts(),
 				findingsCount: 0,
-				incompleteFiles: analysis.oversizedFiles.length,
+				incompleteFiles: oversizedFiles.length,
 				costUsd: 0,
-				totalCostUsd: 0,
+				totalCostUsd: totalCostUsd(previousRuns),
 				error: null,
 			};
 		}
@@ -149,90 +266,98 @@ export async function runReview(
 			error: 'not attempted',
 			metrics: { costUsd: 0, durationMs: 0 },
 		};
+
 		for (let attempt = 1; attempt <= config.maxRetries; attempt += 1) {
+			attempts = attempt;
 			log(`agent attempt ${attempt}/${config.maxRetries}`);
 			outcome = await deps.runAgent({ prompt });
+			spent.costUsd += outcome.metrics.costUsd;
+			spent.durationMs += outcome.metrics.durationMs;
 			if (outcome.ok) break;
 			log(`attempt ${attempt} failed: ${outcome.error}`);
 		}
-		if (!outcome.ok) return failure(outcome.error);
+
+		if (!outcome.ok) return await abort(outcome.error);
 
 		const existing = await github.listThreads();
 		const { toPost } = dedupe(outcome.findings, existing);
 
-		const inline: InlineCommentInput[] = [];
+		const comments: InlineCommentInput[] = [];
 		const posted: KeyedFinding[] = [];
-		const unlocatable: KeyedFinding[] = [];
 		for (const finding of toPost) {
-			if (
-				finding.line !== null &&
-				isCommentable(analysis, finding.file, finding.line)
-			) {
-				inline.push({
-					path: finding.file,
-					line: finding.line,
-					body: renderInlineComment(finding, config.language),
-				});
-				posted.push(finding);
-			} else {
-				unlocatable.push(finding);
+			// 差分に無いファイルは投稿先が無い。プロンプトで禁止している（Task 10）が、
+			// それでも出てきた場合は破棄してログに残す。
+			if (!analysis.commentableLines.has(finding.file)) {
+				log(`dropped a finding outside the diff: ${finding.file}`);
+				continue;
 			}
+			// 行が差分内に無ければファイル単位コメントに落とす。スレッドは立つので
+			// サマリーの索引には載る。
+			const line = isCommentable(analysis, finding.file, finding.line ?? -1)
+				? finding.line
+				: null;
+			comments.push({
+				path: finding.file,
+				line,
+				body: renderInlineComment(finding, config.language),
+			});
+			posted.push(finding);
 		}
 
 		const event = decideEvent({
-			newFindings: toPost,
+			newFindings: posted,
 			existing,
 			threshold: config.requestChangesOn,
 			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
-			approve: false,
+			approve: config.approve,
 		});
 
-		const body = renderSummary({
-			lang: config.language,
-			posted,
-			unlocatable,
-			excludedFiles: analysis.excludedFiles,
-			oversizedFiles: analysis.oversizedFiles,
-			mode: config.mode,
-		});
+		if (event !== 'NONE') {
+			await github.createReview({
+				body: messages(config.language).reviewPointer,
+				event,
+				commitId: pr.headSha,
+				comments,
+			});
+		}
 
-		await github.createReview({
-			body,
-			event: event === 'NONE' ? 'COMMENT' : event,
-			commitId: pr.headSha,
-			comments: inline,
+		// 投稿後に取り直す。サマリーは常に GitHub の現状から組み立てるため、
+		// このレビューが何も投稿していなくても（event === 'NONE' でも）取り直す。
+		// 新規コメントの URL を得る目的だけでなく、他の要因で状態が変わっている
+		// 可能性にも常に追従するため、event での分岐はしない。
+		const threads = await github.listThreads();
+		const runs = record(event, posted.length);
+
+		await writeSticky({
+			reviewedSha: pr.headSha,
+			runs,
+			board: buildBoard(threads),
+			latest: latestRun(),
+			failure: null,
 		});
 
 		const counts = emptyCounts();
-		for (const finding of toPost) counts[finding.severity] += 1;
+		for (const finding of posted) counts[finding.severity] += 1;
 
-		log(
-			`posted ${inline.length} inline / ${unlocatable.length} summary-only, event=${event}`,
-		);
+		log(`posted ${comments.length} comment(s), event=${event}`);
 
 		return {
 			status: 'success',
 			event,
 			counts,
-			findingsCount: toPost.length,
-			incompleteFiles: analysis.oversizedFiles.length,
-			costUsd: 0,
-			totalCostUsd: 0,
+			findingsCount: posted.length,
+			incompleteFiles: oversizedFiles.length,
+			costUsd: spent.costUsd,
+			totalCostUsd: totalCostUsd(runs),
 			error: null,
 		};
 	} catch (error) {
-		return failure(describe(error));
+		// ここを抜けた例外は main() を落とすだけで sticky に何も残らない。
+		// 失敗経路に合流させ、バナーと FAILED の run マーカーを残す。
+		return await abort(describe(error));
 	}
 }
 
 function describe(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
-}
-
-async function safeHeadSha(github: GitHubClient): Promise<string> {
-	try {
-		return (await github.getPullRequest()).headSha;
-	} catch {
-		return '';
-	}
 }

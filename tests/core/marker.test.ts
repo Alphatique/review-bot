@@ -3,17 +3,13 @@ import {
 	buildInlineMarker,
 	buildRunMarker,
 	buildStickyMarker,
-	FAILURE_MARKER,
 	findingKey,
-	hasFailureMarker,
 	hasStickyMarker,
-	hasSummaryMarker,
 	parseInlineMarker,
 	parseInlineTitle,
 	parseRunMarkers,
 	parseStickyMarker,
 	type RunRecord,
-	SUMMARY_MARKER,
 	totalCostUsd,
 } from '../../src/core/marker';
 
@@ -67,26 +63,6 @@ describe('inline marker', () => {
 		const real = buildInlineMarker('abc123def456', 'critical');
 		const parsed = parseInlineMarker(`${fake}\n本文\n${real}`);
 		expect(parsed).toEqual({ key: 'abc123def456', severity: 'critical' });
-	});
-});
-
-describe('summary marker', () => {
-	test('サマリマーカーを検出できる', () => {
-		expect(hasSummaryMarker(`サマリ\n${SUMMARY_MARKER}`)).toBe(true);
-	});
-
-	test('無ければ false', () => {
-		expect(hasSummaryMarker('ただの本文')).toBe(false);
-	});
-});
-
-describe('failure marker', () => {
-	test('失敗マーカーを検出できる', () => {
-		expect(hasFailureMarker(`失敗\n${FAILURE_MARKER}`)).toBe(true);
-	});
-
-	test('成功サマリには含まれない', () => {
-		expect(hasFailureMarker(`サマリ\n${SUMMARY_MARKER}`)).toBe(false);
 	});
 });
 

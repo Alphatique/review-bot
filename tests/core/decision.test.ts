@@ -78,7 +78,9 @@ describe('decideEvent', () => {
 
 	test('approve が on かつ未解決ゼロなら APPROVE', () => {
 		expect(
-			decideEvent(input({ approve: true, existing: [existing('major', true)] })),
+			decideEvent(
+				input({ approve: true, existing: [existing('major', true)] }),
+			),
 		).toBe('APPROVE');
 	});
 
@@ -91,9 +93,9 @@ describe('decideEvent', () => {
 	});
 
 	test('未解決が残っていても新規指摘が無ければ Review を作らない', () => {
-		expect(
-			decideEvent(input({ existing: [existing('minor', false)] })),
-		).toBe('NONE');
+		expect(decideEvent(input({ existing: [existing('minor', false)] }))).toBe(
+			'NONE',
+		);
 	});
 
 	test('approve が on でも今回の新規指摘があれば APPROVE しない', () => {
@@ -103,9 +105,9 @@ describe('decideEvent', () => {
 	});
 
 	test('bot 自身の PR には APPROVE も出さない', () => {
-		expect(
-			decideEvent(input({ approve: true, canSubmitVerdict: false })),
-		).toBe('NONE');
+		expect(decideEvent(input({ approve: true, canSubmitVerdict: false }))).toBe(
+			'NONE',
+		);
 	});
 
 	test('outdated かどうかは判定に影響しない', () => {

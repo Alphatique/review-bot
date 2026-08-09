@@ -11,20 +11,7 @@ export interface LatestRun {
 }
 
 export interface Messages {
-	// renderSummary / renderFailureSummary（旧）が参照する。Task 8 で renderSticky に
-	// 一本化した後、oversizedWarning / errorDetails を除いて一緒に消す。
-	summaryHeading: string;
-	noFindings: string;
-	findingsCount: (n: number) => string;
-	incrementalNote: string;
-	fullNote: string;
-	unlocatableHeading: string;
-	unlocatableNote: string;
-	failureHeading: string;
-	failureBody: string;
-	instructionSource: string;
-
-	// renderSticky（新）が参照する。
+	// renderSticky が参照する。
 	heading: string;
 	reviewedUpTo: (sha: string) => string;
 	outstandingCount: (n: number) => string;
@@ -41,26 +28,14 @@ export interface Messages {
 	failureBanner: (sha: string) => string;
 	outdatedSuffix: string;
 	unknownTitle: string;
+	/** createReview の body。指摘そのものは sticky にまとまるので、リンクの案内だけ出す。 */
+	reviewPointer: string;
 
-	// 新旧で共用。重複させない。
 	errorDetails: string;
 	oversizedWarning: (files: readonly string[]) => string;
 }
 
 const EN: Messages = {
-	summaryHeading: '## 🤖 Code Review',
-	noFindings: 'No new findings.',
-	findingsCount: n => `${n} new finding${n === 1 ? '' : 's'} posted inline.`,
-	incrementalNote: 'Reviewed the changes since the last review.',
-	fullNote: 'Reviewed the full diff of this pull request.',
-	unlocatableHeading: '### Findings without a diff location',
-	unlocatableNote:
-		'These could not be anchored to a line in the diff, so they are listed here.',
-	failureHeading: '## 🤖 Code Review',
-	failureBody:
-		'⚠️ The automated review could not be completed. Re-run the workflow or check the job logs.',
-	instructionSource: 'Review instructions',
-
 	heading: '## 🤖 Code Review',
 	reviewedUpTo: sha => `Reviewed up to \`${sha}\``,
 	outstandingCount: n => `**${n}** outstanding`,
@@ -82,6 +57,8 @@ const EN: Messages = {
 		`> ⚠️ The automated review could not be completed. \`${sha}\` has **not** been reviewed. Re-run the workflow or check the job logs.`,
 	outdatedSuffix: '(outdated)',
 	unknownTitle: '(title unavailable)',
+	reviewPointer:
+		'See the review summary comment for the full status of this pull request.',
 
 	errorDetails: 'Error details',
 	oversizedWarning: files =>
@@ -91,20 +68,6 @@ const EN: Messages = {
 };
 
 const JA: Messages = {
-	summaryHeading: '## 🤖 コードレビュー',
-	noFindings: '新規の指摘はありません。',
-	findingsCount: n =>
-		`${n} 件の新規指摘をインラインコメントとして投稿しました。`,
-	incrementalNote: '前回のレビュー以降の変更をレビューしました。',
-	fullNote: 'この PR の差分全体をレビューしました。',
-	unlocatableHeading: '### 行を特定できなかった指摘',
-	unlocatableNote:
-		'差分内の行に紐づけられなかったため、ここにまとめて記載します。',
-	failureHeading: '## 🤖 コードレビュー',
-	failureBody:
-		'⚠️ 自動レビューを完了できませんでした。ワークフローを再実行するか、ジョブのログを確認してください。',
-	instructionSource: 'レビュー観点',
-
 	heading: '## 🤖 コードレビュー',
 	reviewedUpTo: sha => `\`${sha}\` までレビュー済み`,
 	outstandingCount: n => `未解決 **${n}** 件`,
@@ -126,6 +89,8 @@ const JA: Messages = {
 		`> ⚠️ 自動レビューを完了できませんでした。\`${sha}\` は未レビューです。ワークフローを再実行するか、ジョブのログを確認してください。`,
 	outdatedSuffix: '(outdated)',
 	unknownTitle: '(タイトル不明)',
+	reviewPointer:
+		'この PR の全体状況はレビューサマリーコメントを参照してください。',
 
 	errorDetails: 'エラー概要',
 	oversizedWarning: files =>

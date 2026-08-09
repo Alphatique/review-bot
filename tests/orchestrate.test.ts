@@ -3,10 +3,11 @@ import type { Config } from '../src/config';
 import type { ThreadInfo } from '../src/core/board';
 import { DEFAULT_EXCLUDE } from '../src/core/diff';
 import {
+	buildRunMarker,
 	buildStickyMarker,
 	findingKey,
 	parseInlineMarker,
-	SUMMARY_MARKER,
+	parseRunMarkers,
 } from '../src/core/marker';
 import type { Finding } from '../src/core/schema';
 import type { AgentOutcome } from '../src/io/agent';
@@ -60,32 +61,56 @@ const PR: PullRequestInfo = {
 interface FakeOptions {
 	pr?: Partial<PullRequestInfo>;
 	lastReviewed?: string | null;
+	sticky?: { commentId: number; body: string } | null;
 	diff?: string;
 	threads?: ThreadInfo[];
+	/** createReview 後の再取得で返すスレッド。未指定なら threads と同じ。 */
+	threadsAfterReview?: ThreadInfo[];
 	outcomes?: AgentOutcome[];
 	instructions?: string | null;
+	stickyWriteError?: Error;
+	/** getDiff を失敗させて想定外の例外経路を試す。 */
+	diffError?: Error;
+	/** findSticky を失敗させて「sticky を特定できない」経路を試す。 */
+	stickyLookupError?: Error;
 }
 
 function setup(options: FakeOptions = {}) {
 	const reviews: CreateReviewInput[] = [];
 	const prompts: string[] = [];
 	const diffRequests: { from: string; to: string }[] = [];
-	const outcomes = [...(options.outcomes ?? [])];
 	const stickyWrites: { commentId: number | null; body: string }[] = [];
 	const dismissals: string[] = [];
+	const outcomes = [...(options.outcomes ?? [])];
+
+	const sticky =
+		options.sticky ??
+		(options.lastReviewed
+			? { commentId: 1, body: buildStickyMarker(options.lastReviewed) }
+			: null);
+
+	let threadCalls = 0;
 
 	const github: GitHubClient = {
 		getPullRequest: async () => ({ ...PR, ...options.pr }),
 		getDiff: async (from, to) => {
 			diffRequests.push({ from, to });
+			if (options.diffError) throw options.diffError;
 			return options.diff ?? DIFF;
 		},
-		listThreads: async () => options.threads ?? [],
-		findSticky: async () =>
-			options.lastReviewed
-				? { commentId: 1, body: buildStickyMarker(options.lastReviewed) }
-				: null,
+		listThreads: async () => {
+			threadCalls += 1;
+			if (threadCalls > 1 && options.threadsAfterReview) {
+				return options.threadsAfterReview;
+			}
+			return options.threads ?? [];
+		},
+		findSticky: async () => {
+			if (options.stickyLookupError) throw options.stickyLookupError;
+			return sticky;
+		},
 		upsertSticky: async input => {
+			if (options.stickyWriteError) throw options.stickyWriteError;
 			stickyWrites.push(input);
 		},
 		createReview: async input => {
@@ -147,7 +172,13 @@ describe('runReview', () => {
 
 	test('コメント可能行の指摘をインラインコメントとして投稿する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ line: 2 })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ line: 2 })],
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
+			],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews).toHaveLength(1);
@@ -157,27 +188,60 @@ describe('runReview', () => {
 		expect(parseInlineMarker(reviews[0]!.comments[0]!.body)).not.toBeNull();
 	});
 
-	test('コメント可能行でない指摘はサマリへ落とす', async () => {
+	test('行を特定できない指摘はファイル単位コメントとして投稿する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ line: 999 })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ line: null })],
+					metrics: { costUsd: 0, durationMs: 0 },
+				},
+			],
 		});
 		await runReview(deps, CONFIG);
-		expect(reviews[0]!.comments).toHaveLength(0);
-		expect(reviews[0]!.body).toContain('未使用の変数');
+		expect(reviews[0]!.comments).toHaveLength(1);
+		expect(reviews[0]!.comments[0]!.line).toBeNull();
+		expect(reviews[0]!.comments[0]!.path).toBe('src/a.ts');
 	});
 
-	test('line が null の指摘はサマリへ落とす', async () => {
+	test('差分に無い行の指摘もファイル単位コメントにする', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ line: null })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ line: 999 })],
+					metrics: { costUsd: 0, durationMs: 0 },
+				},
+			],
 		});
 		await runReview(deps, CONFIG);
-		expect(reviews[0]!.comments).toHaveLength(0);
-		expect(reviews[0]!.body).toContain('未使用の変数');
+		expect(reviews[0]!.comments[0]!.line).toBeNull();
+	});
+
+	test('差分に無いファイルの指摘は破棄する', async () => {
+		const { deps, reviews } = setup({
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ file: 'src/other.ts' })],
+					metrics: { costUsd: 0, durationMs: 0 },
+				},
+			],
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(reviews).toHaveLength(0);
+		expect(result.findingsCount).toBe(0);
 	});
 
 	test('閾値以上の指摘があれば REQUEST_CHANGES で提出する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ severity: 'critical' })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ severity: 'critical' })],
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
+			],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.event).toBe('REQUEST_CHANGES');
@@ -185,7 +249,13 @@ describe('runReview', () => {
 
 	test('閾値未満なら COMMENT で提出する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ severity: 'minor' })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ severity: 'minor' })],
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
+			],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.event).toBe('COMMENT');
@@ -194,7 +264,13 @@ describe('runReview', () => {
 	test('bot 自身の PR には REQUEST_CHANGES を出さない', async () => {
 		const { deps, reviews } = setup({
 			pr: { authorLogin: 'github-actions[bot]' },
-			outcomes: [{ ok: true, findings: [finding({ severity: 'critical' })], metrics: { costUsd: 0.1, durationMs: 1000 } }],
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ severity: 'critical' })],
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
+			],
 		});
 		await runReview(deps, { ...CONFIG, requestChangesOn: 'critical' });
 		expect(reviews[0]!.event).toBe('COMMENT');
@@ -203,7 +279,13 @@ describe('runReview', () => {
 	test('既存と重複する指摘は再投稿しない', async () => {
 		const f = finding();
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [f], metrics: { costUsd: 0.1, durationMs: 1000 } }],
+			outcomes: [
+				{
+					ok: true,
+					findings: [f],
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
+			],
 			threads: [
 				{
 					key: findingKey(f.file, f.title),
@@ -223,7 +305,9 @@ describe('runReview', () => {
 
 	test('未解決の既存指摘があれば REQUEST_CHANGES を維持する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [], metrics: { costUsd: 0.1, durationMs: 1000 } }],
+			outcomes: [
+				{ ok: true, findings: [], metrics: { costUsd: 0.1, durationMs: 1000 } },
+			],
 			threads: [
 				{
 					key: 'a'.repeat(12),
@@ -244,7 +328,11 @@ describe('runReview', () => {
 	test('失敗したらリトライする', async () => {
 		const { deps, prompts } = setup({
 			outcomes: [
-				{ ok: false, error: 'boom', metrics: { costUsd: 0.1, durationMs: 1000 } },
+				{
+					ok: false,
+					error: 'boom',
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
 				{ ok: true, findings: [], metrics: { costUsd: 0.1, durationMs: 1000 } },
 			],
 		});
@@ -253,20 +341,31 @@ describe('runReview', () => {
 		expect(result.status).toBe('success');
 	});
 
-	test('リトライを使い切ったら失敗通知を投稿する', async () => {
-		const { deps, reviews } = setup({
+	test('リトライを使い切ったら sticky に失敗を記録し、Review は作らない', async () => {
+		const { deps, reviews, stickyWrites } = setup({
 			outcomes: [
-				{ ok: false, error: 'boom', metrics: { costUsd: 0.1, durationMs: 1000 } },
-				{ ok: false, error: 'boom', metrics: { costUsd: 0.1, durationMs: 1000 } },
-				{ ok: false, error: 'boom', metrics: { costUsd: 0.1, durationMs: 1000 } },
+				{
+					ok: false,
+					error: 'boom',
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
+				{
+					ok: false,
+					error: 'boom',
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
+				{
+					ok: false,
+					error: 'boom',
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
 			],
 		});
 		const result = await runReview(deps, CONFIG);
 		expect(result.status).toBe('failed');
-		expect(reviews).toHaveLength(1);
-		expect(reviews[0]!.event).toBe('COMMENT');
-		expect(reviews[0]!.body).toContain(SUMMARY_MARKER);
-		expect(reviews[0]!.body).toContain('boom');
+		expect(reviews).toHaveLength(0);
+		expect(stickyWrites).toHaveLength(1);
+		expect(stickyWrites[0]!.body).toContain('boom');
 	});
 
 	test('差分が空ならレビューを投稿せず成功で終わる', async () => {
@@ -314,5 +413,177 @@ describe('runReview', () => {
 		expect(result.counts.critical).toBe(1);
 		expect(result.counts.major).toBe(2);
 		expect(result.counts.minor).toBe(0);
+	});
+
+	test('指摘ゼロなら Review を作らず sticky だけ更新する', async () => {
+		const { deps, reviews, stickyWrites } = setup();
+		const result = await runReview(deps, CONFIG);
+		expect(reviews).toHaveLength(0);
+		expect(stickyWrites).toHaveLength(1);
+		expect(result.event).toBe('NONE');
+		expect(result.status).toBe('success');
+	});
+
+	test('sticky に head sha を書き込む', async () => {
+		const { deps, stickyWrites } = setup();
+		await runReview(deps, CONFIG);
+		expect(stickyWrites[0]!.body).toContain(
+			'<!-- review-bot:v1 sticky reviewed=head -->',
+		);
+	});
+
+	test('sticky が無ければ新規作成する', async () => {
+		const { deps, stickyWrites } = setup();
+		await runReview(deps, CONFIG);
+		expect(stickyWrites[0]!.commentId).toBeNull();
+	});
+
+	test('sticky があれば同じコメントを更新する', async () => {
+		const { deps, stickyWrites } = setup({ lastReviewed: 'prev' });
+		await runReview(deps, CONFIG);
+		expect(stickyWrites[0]!.commentId).toBe(1);
+	});
+
+	test('run マーカーを追記し、過去分を残す', async () => {
+		const { deps, stickyWrites } = setup({
+			sticky: {
+				commentId: 1,
+				body: `${buildStickyMarker('prev')}\n${buildRunMarker({
+					commit: 'prev',
+					mode: 'auto',
+					newFindings: 2,
+					event: 'COMMENT',
+					costUsd: 0.5,
+					seconds: 30,
+					attempts: 1,
+					model: 'claude-sonnet-5',
+					effort: 'high',
+				})}`,
+			},
+		});
+		await runReview(deps, CONFIG);
+		const runs = parseRunMarkers(stickyWrites[0]!.body);
+		expect(runs.map(r => r.commit)).toEqual(['prev', 'head']);
+	});
+
+	test('コストを合算して返す', async () => {
+		const { deps } = setup({
+			outcomes: [
+				{
+					ok: false,
+					error: 'boom',
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
+				{
+					ok: true,
+					findings: [],
+					metrics: { costUsd: 0.2, durationMs: 2000 },
+				},
+			],
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(result.costUsd).toBeCloseTo(0.3, 4);
+	});
+
+	test('リトライ回数を run マーカーに書く', async () => {
+		const { deps, stickyWrites } = setup({
+			outcomes: [
+				{
+					ok: false,
+					error: 'boom',
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
+				{
+					ok: true,
+					findings: [],
+					metrics: { costUsd: 0.2, durationMs: 2000 },
+				},
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(parseRunMarkers(stickyWrites[0]!.body)[0]!.attempts).toBe(2);
+	});
+
+	test('累計コストは過去の run マーカーを含む', async () => {
+		const { deps } = setup({
+			sticky: {
+				commentId: 1,
+				body: `${buildStickyMarker('prev')}\n${buildRunMarker({
+					commit: 'prev',
+					mode: 'auto',
+					newFindings: 0,
+					event: 'NONE',
+					costUsd: 0.5,
+					seconds: 10,
+					attempts: 1,
+					model: 'm',
+					effort: 'high',
+				})}`,
+			},
+			outcomes: [
+				{
+					ok: true,
+					findings: [],
+					metrics: { costUsd: 0.25, durationMs: 1000 },
+				},
+			],
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(result.totalCostUsd).toBeCloseTo(0.75, 4);
+	});
+
+	test('approve が有効で未解決ゼロなら APPROVE を出す', async () => {
+		const { deps, reviews } = setup();
+		const result = await runReview(deps, { ...CONFIG, approve: true });
+		expect(result.event).toBe('APPROVE');
+		expect(reviews[0]!.event).toBe('APPROVE');
+	});
+
+	test('sticky の upsert が失敗してもレビューは成功扱い', async () => {
+		const { deps } = setup({ stickyWriteError: new Error('rate limited') });
+		const result = await runReview(deps, CONFIG);
+		expect(result.status).toBe('success');
+	});
+
+	test('想定外の例外も sticky に失敗バナーとして残す', async () => {
+		const { deps, stickyWrites, reviews } = setup({
+			diffError: new Error('502 from GitHub'),
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(result.status).toBe('failed');
+		expect(result.error).toContain('502 from GitHub');
+		expect(reviews).toHaveLength(0);
+		expect(stickyWrites).toHaveLength(1);
+		expect(stickyWrites[0]!.body).toContain('502 from GitHub');
+		expect(parseRunMarkers(stickyWrites[0]!.body)[0]!.event).toBe('FAILED');
+	});
+
+	test('sticky を特定できないまま失敗したら sticky を書かない', async () => {
+		// findSticky が失敗した状態で新規作成すると sticky が二重になる。
+		const { deps, stickyWrites } = setup({
+			stickyLookupError: new Error('403'),
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(result.status).toBe('failed');
+		expect(stickyWrites).toHaveLength(0);
+	});
+
+	test('board の再取得結果を sticky に描く', async () => {
+		const { deps, stickyWrites } = setup({
+			threadsAfterReview: [
+				{
+					key: 'b'.repeat(12),
+					severity: 'critical',
+					title: '再取得で見えた指摘',
+					file: 'src/a.ts',
+					line: 2,
+					url: 'https://example.test/9',
+					isResolved: false,
+					isOutdated: false,
+				},
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(stickyWrites[0]!.body).toContain('再取得で見えた指摘');
 	});
 });
