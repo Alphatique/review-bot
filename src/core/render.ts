@@ -86,14 +86,11 @@ export function renderSticky(input: StickyInput): string {
 	}
 
 	if (input.oversizedFiles.length > 0) {
-		lines.push(
-			m.oversizedWarning(input.oversizedFiles.map(sanitizeInline)),
-			'',
-		);
+		lines.push(m.oversizedWarning(input.oversizedFiles.map(sanitizePath)), '');
 	}
 
 	if (input.droppedFiles.length > 0) {
-		lines.push(m.droppedWarning(input.droppedFiles.map(sanitizeInline)), '');
+		lines.push(m.droppedWarning(input.droppedFiles.map(sanitizePath)), '');
 	}
 
 	lines.push(renderStatusLine(input, m), '');
@@ -164,7 +161,8 @@ function renderStatusLine(
  * sticky に埋め込む前に潰す。sticky は状態ストアそのものなので、ここに来る
  * 文字列は「表示テキスト」ではなく「シリアライズ形式への入力」として扱う。
  * < と > を実体参照にするのは、表示を変えずに <!-- --> を成立させないため。
- * バックティックはコードスパンを閉じられるので潰す。
+ * バックティックはここでは潰さない — コードスパンで囲む文脈（ファイルパスなど）
+ * でだけ問題になるので、その判断は sanitizePath に委ねる。
  */
 function sanitizeInline(value: string): string {
 	return value
@@ -172,8 +170,16 @@ function sanitizeInline(value: string): string {
 		.replace(/&/g, '&amp;')
 		.replace(/</g, '&lt;')
 		.replace(/>/g, '&gt;')
-		.replace(/`/g, "'")
 		.trim();
+}
+
+/**
+ * コードスパン（\`...\`）で囲んで出す値。バックティックはスパンを閉じられる
+ * ので潰す。droppedFiles / oversizedFiles のファイル名と、指摘の file:line
+ * 表示に使う。
+ */
+function sanitizePath(value: string): string {
+	return sanitizeInline(value).replace(/`/g, "'");
 }
 
 /**
@@ -189,6 +195,8 @@ function sanitizeFenced(value: string): string {
  * 常設コメントなので、リンクラベルを閉じられたり、偽のマーカーを仕込まれたり
  * すると壊れたまま残る。埋め込む直前に潰す。角括弧はリンクラベルの中でのみ
  * 問題になるので、共通の sanitizeInline とは別にここでだけエスケープする。
+ * タイトルはコードスパンではなくリンクラベルに入るので、バックティックが
+ * あってもコードスパンになるだけで壊れない。潰さずそのまま残す。
  */
 function sanitizeTitle(title: string): string {
 	return sanitizeInline(title).replace(/([\\[\]])/g, String.raw`\$1`);
@@ -203,7 +211,9 @@ function renderThreadLine(
 	const title = sanitizeTitle(thread.title ?? unknownTitle);
 	const link = `[${title}](${thread.url})`;
 	const where =
-		thread.line === null ? thread.file : `${thread.file}:${thread.line}`;
+		thread.line === null
+			? sanitizePath(thread.file)
+			: `${sanitizePath(thread.file)}:${thread.line}`;
 	const suffix = thread.isOutdated ? ` ${outdatedSuffix}` : '';
 	return `- ${SEVERITY_EMOJI[thread.severity]} ${strike ? `~~${link}~~` : link} — \`${where}\`${suffix}`;
 }

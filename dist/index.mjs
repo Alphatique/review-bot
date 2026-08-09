@@ -26570,8 +26570,8 @@ function renderSticky(input) {
 	const m = messages(input.lang);
 	const lines = [m.heading, ""];
 	if (input.failure !== null) lines.push(m.failureBanner(input.failure.sha), ">", `> <details><summary>${m.errorDetails}</summary>`, ">", "> ```", ...(sanitizeFenced(input.failure.message).trim() || "(no details)").split("\n").map((line) => `> ${line}`), "> ```", ">", "> </details>", "");
-	if (input.oversizedFiles.length > 0) lines.push(m.oversizedWarning(input.oversizedFiles.map(sanitizeInline)), "");
-	if (input.droppedFiles.length > 0) lines.push(m.droppedWarning(input.droppedFiles.map(sanitizeInline)), "");
+	if (input.oversizedFiles.length > 0) lines.push(m.oversizedWarning(input.oversizedFiles.map(sanitizePath)), "");
+	if (input.droppedFiles.length > 0) lines.push(m.droppedWarning(input.droppedFiles.map(sanitizePath)), "");
 	lines.push(renderStatusLine(input, m), "");
 	if (input.board.outstanding.length > 0) {
 		lines.push(m.outstandingHeading, "");
@@ -26605,10 +26605,19 @@ function renderStatusLine(input, m) {
 * sticky に埋め込む前に潰す。sticky は状態ストアそのものなので、ここに来る
 * 文字列は「表示テキスト」ではなく「シリアライズ形式への入力」として扱う。
 * < と > を実体参照にするのは、表示を変えずに <!-- --> を成立させないため。
-* バックティックはコードスパンを閉じられるので潰す。
+* バックティックはここでは潰さない — コードスパンで囲む文脈（ファイルパスなど）
+* でだけ問題になるので、その判断は sanitizePath に委ねる。
 */
 function sanitizeInline(value) {
-	return value.replace(/\s+/g, " ").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/`/g, "'").trim();
+	return value.replace(/\s+/g, " ").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").trim();
+}
+/**
+* コードスパン（\`...\`）で囲んで出す値。バックティックはスパンを閉じられる
+* ので潰す。droppedFiles / oversizedFiles のファイル名と、指摘の file:line
+* 表示に使う。
+*/
+function sanitizePath(value) {
+	return sanitizeInline(value).replace(/`/g, "'");
 }
 /**
 * フェンス内に出すテキスト。改行は情報なので保つ。マーカーは <!-- が
@@ -26622,13 +26631,15 @@ function sanitizeFenced(value) {
 * 常設コメントなので、リンクラベルを閉じられたり、偽のマーカーを仕込まれたり
 * すると壊れたまま残る。埋め込む直前に潰す。角括弧はリンクラベルの中でのみ
 * 問題になるので、共通の sanitizeInline とは別にここでだけエスケープする。
+* タイトルはコードスパンではなくリンクラベルに入るので、バックティックが
+* あってもコードスパンになるだけで壊れない。潰さずそのまま残す。
 */
 function sanitizeTitle(title) {
 	return sanitizeInline(title).replace(/([\\[\]])/g, String.raw`\$1`);
 }
 function renderThreadLine(thread, unknownTitle, outdatedSuffix, strike = false) {
 	const link = `[${sanitizeTitle(thread.title ?? unknownTitle)}](${thread.url})`;
-	const where = thread.line === null ? thread.file : `${thread.file}:${thread.line}`;
+	const where = thread.line === null ? sanitizePath(thread.file) : `${sanitizePath(thread.file)}:${thread.line}`;
 	const suffix = thread.isOutdated ? ` ${outdatedSuffix}` : "";
 	return `- ${SEVERITY_EMOJI[thread.severity]} ${strike ? `~~${link}~~` : link} — \`${where}\`${suffix}`;
 }
