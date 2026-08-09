@@ -51,4 +51,10 @@ describe('buildPrompt', () => {
 		const out = buildPrompt({ ...BASE, instructions: 'タブを使うこと' });
 		expect(out).toContain('タブを使うこと');
 	});
+
+	test('差分外のファイルを指摘対象にしないよう指示する', () => {
+		expect(buildPrompt(BASE)).toContain(
+			'差分に含まれるファイル以外を指摘対象にしない',
+		);
+	});
 });
