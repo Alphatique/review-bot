@@ -214,6 +214,7 @@ const MARKER_VALUE = String.raw`[\w.:@/-]+`;
 
 const STICKY_MARKER_RE = new RegExp(
 	String.raw`<!--\s*review-bot:v1 sticky\s+reviewed=(${MARKER_VALUE})\s*-->`,
+	'g',
 );
 const RUN_MARKER_RE = /<!--\s*review-bot:v1 run\s+([^>]*?)\s*-->/g;
 const RUN_FIELD_RE = new RegExp(
@@ -251,9 +252,15 @@ export function buildStickyMarker(reviewed: string): string {
 	return `<!-- review-bot:v1 sticky reviewed=${reviewed} -->`;
 }
 
+/**
+ * sticky 本文には指摘タイトルがそのまま載る。タイトルは差分由来の任意文字列で
+ * 攻撃者が影響を与えられるため、そこに偽マーカーを仕込まれても本文末尾の
+ * 正規ブロックが勝つよう、最後の一致を採用する（parseInlineMarker と同じ方針）。
+ */
 export function parseStickyMarker(body: string): { reviewed: string } | null {
-	const match = STICKY_MARKER_RE.exec(body);
-	return match?.[1] ? { reviewed: match[1] } : null;
+	const matches = [...body.matchAll(STICKY_MARKER_RE)];
+	const last = matches[matches.length - 1];
+	return last?.[1] ? { reviewed: last[1] } : null;
 }
 
 export function hasStickyMarker(body: string): boolean {
@@ -518,7 +525,9 @@ function sortForDisplay(threads: readonly ThreadInfo[]): ThreadInfo[] {
 	return [...threads].toSorted((a, b) => {
 		const bySeverity = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
 		if (bySeverity !== 0) return bySeverity;
-		const byFile = a.file.localeCompare(b.file);
+		// localeCompare はランタイムの既定ロケールに依存し、CI と手元で
+		// 並び順が割れうる。安定した並びが欲しいので序数比較にする。
+		const byFile = a.file < b.file ? -1 : a.file > b.file ? 1 : 0;
 		if (byFile !== 0) return byFile;
 		return (a.line ?? 0) - (b.line ?? 0);
 	});
@@ -651,12 +660,18 @@ describe('decideEvent', () => {
 		).toBe('APPROVE');
 	});
 
-	test('approve が on でも未解決があれば APPROVE しない', () => {
+	test('approve が on でも未解決があれば APPROVE せず Review も作らない', () => {
 		expect(
 			decideEvent(
 				input({ approve: true, existing: [existing('minor', false)] }),
 			),
-		).toBe('COMMENT');
+		).toBe('NONE');
+	});
+
+	test('未解決が残っていても新規指摘が無ければ Review を作らない', () => {
+		expect(decideEvent(input({ existing: [existing('minor', false)] }))).toBe(
+			'NONE',
+		);
 	});
 
 	test('approve が on でも今回の新規指摘があれば APPROVE しない', () => {
@@ -1331,12 +1346,29 @@ function renderThreadLine(
 	outdatedSuffix: string,
 	strike = false,
 ): string {
-	const title = thread.title ?? unknownTitle;
+	const title =
+		thread.title === null ? unknownTitle : sanitizeTitle(thread.title);
 	const link = `[${title}](${thread.url})`;
 	const where =
 		thread.line === null ? thread.file : `${thread.file}:${thread.line}`;
 	const suffix = thread.isOutdated ? ` ${outdatedSuffix}` : '';
 	return `- ${SEVERITY_EMOJI[thread.severity]} ${strike ? `~~${link}~~` : link} — \`${where}\`${suffix}`;
+}
+
+/**
+ * タイトルはモデル出力で、差分の内容に影響される。sticky は編集され続ける
+ * 常設コメントなので、リンクラベルを閉じられたり、偽のマーカーを仕込まれたり
+ * すると壊れたまま残る。埋め込む直前に潰す。
+ * < と > を実体参照にするのは、表示を変えずに <!-- --> を成立させないため。
+ */
+function sanitizeTitle(title: string): string {
+	return title
+		.replace(/\s+/g, ' ')
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/([\\[\]])/g, String.raw`\$1`)
+		.trim();
 }
 
 function renderHistory(
@@ -1472,8 +1504,6 @@ export type AgentOutcome =
 	| { ok: true; findings: Finding[]; metrics: AgentMetrics }
 	| { ok: false; error: string; metrics: AgentMetrics };
 
-const NO_METRICS: AgentMetrics = { costUsd: 0, durationMs: 0 };
-
 /** SDK の result メッセージから実測値を取り出す。result 以外なら null。 */
 export function extractMetrics(message: unknown): AgentMetrics | null {
 	if (typeof message !== 'object' || message === null) return null;
@@ -1492,10 +1522,10 @@ function toFiniteNumber(value: unknown): number {
 
 `runAgent` の本体を次のように変える。
 
-1. `let captured` の下にメトリクス保持を足す。
+1. `let captured` の下にメトリクス保持を足す。共有の定数オブジェクトを既定値にすると、呼び出し側が `metrics` を書き換えたときに全実行に波及しうるので、リテラルを直接持たせる。
 
 ```ts
-	let metrics: AgentMetrics = NO_METRICS;
+	let metrics: AgentMetrics = { costUsd: 0, durationMs: 0 };
 ```
 
 2. メッセージループの `result` 分岐でメトリクスを拾う。
@@ -1549,7 +1579,24 @@ function toFiniteNumber(value: unknown): number {
 Run: `bun test tests/io/agent-metrics.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: `orchestrate.test.ts` のフェイク outcome に metrics を足す**
+- [ ] **Step 5: `src/orchestrate.ts` の初期 outcome に metrics を足す**
+
+`AgentOutcome` に `metrics` が必須で入ったので、`src/orchestrate.ts:133` のリテラルが型エラーになる。次に差し替える。
+
+```ts
+		let outcome: AgentOutcome = {
+			ok: false,
+			error: 'not attempted',
+			metrics: { costUsd: 0, durationMs: 0 },
+		};
+```
+
+このタスクではここだけ直せばよい。合算とリトライ回数の記録は Task 8 の仕事なので、`spent` の導入や `attempts` の集計はここでは**やらない**。
+
+Run: `bun run typecheck`
+Expected: エラーなし
+
+- [ ] **Step 6: `orchestrate.test.ts` のフェイク outcome に metrics を足す**
 
 `tests/orchestrate.test.ts` の `outcomes` 配列に出てくる全ての `{ ok: true, findings: [...] }` / `{ ok: false, error: 'boom' }` に `metrics: { costUsd: 0.1, durationMs: 1000 }` を足す。`setup` の既定値も同様。
 
@@ -1566,15 +1613,15 @@ Expected: PASS
 			},
 ```
 
-- [ ] **Step 6: 型・lint・全テスト**
+- [ ] **Step 7: 型・lint・全テスト**
 
 Run: `bun run typecheck && bun run lint && bun test`
 Expected: 全て PASS
 
-- [ ] **Step 7: コミット**
+- [ ] **Step 8: コミット**
 
 ```bash
-git add src/io/agent.ts tests/io/agent-metrics.test.ts tests/orchestrate.test.ts
+git add src/io/agent.ts src/orchestrate.ts tests/io/agent-metrics.test.ts tests/orchestrate.test.ts
 git commit -m "feat(agent): 実行コストと所要時間を呼び出し側へ返す"
 ```
 
