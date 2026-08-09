@@ -66,7 +66,7 @@ export function renderSticky(input: StickyInput): string {
 			`> <details><summary>${m.errorDetails}</summary>`,
 			'>',
 			'> ```',
-			...(input.failure.message.trim() || '(no details)')
+			...(sanitizeFenced(input.failure.message).trim() || '(no details)')
 				.split('\n')
 				.map(line => `> ${line}`),
 			'> ```',
@@ -77,11 +77,14 @@ export function renderSticky(input: StickyInput): string {
 	}
 
 	if (input.oversizedFiles.length > 0) {
-		lines.push(m.oversizedWarning(input.oversizedFiles), '');
+		lines.push(
+			m.oversizedWarning(input.oversizedFiles.map(sanitizeInline)),
+			'',
+		);
 	}
 
 	if (input.droppedFiles.length > 0) {
-		lines.push(m.droppedWarning(input.droppedFiles), '');
+		lines.push(m.droppedWarning(input.droppedFiles.map(sanitizeInline)), '');
 	}
 
 	lines.push(renderStatusLine(input, m), '');
@@ -149,19 +152,37 @@ function renderStatusLine(
 }
 
 /**
- * タイトルはモデル出力で、差分の内容に影響される。sticky は編集され続ける
- * 常設コメントなので、リンクラベルを閉じられたり、偽のマーカーを仕込まれたり
- * すると壊れたまま残る。埋め込む直前に潰す。
+ * sticky に埋め込む前に潰す。sticky は状態ストアそのものなので、ここに来る
+ * 文字列は「表示テキスト」ではなく「シリアライズ形式への入力」として扱う。
  * < と > を実体参照にするのは、表示を変えずに <!-- --> を成立させないため。
+ * バックティックはコードスパンを閉じられるので潰す。
  */
-function sanitizeTitle(title: string): string {
-	return title
+function sanitizeInline(value: string): string {
+	return value
 		.replace(/\s+/g, ' ')
 		.replace(/&/g, '&amp;')
 		.replace(/</g, '&lt;')
 		.replace(/>/g, '&gt;')
-		.replace(/([\\[\]])/g, String.raw`\$1`)
+		.replace(/`/g, "'")
 		.trim();
+}
+
+/**
+ * フェンス内に出すテキスト。改行は情報なので保つ。マーカーは <!-- が
+ * 成立しなければ作れないので < だけを潰し、フェンス自体を閉じられないようにする。
+ */
+function sanitizeFenced(value: string): string {
+	return value.replace(/</g, '&lt;').replace(/```/g, "'''");
+}
+
+/**
+ * タイトルはモデル出力で、差分の内容に影響される。sticky は編集され続ける
+ * 常設コメントなので、リンクラベルを閉じられたり、偽のマーカーを仕込まれたり
+ * すると壊れたまま残る。埋め込む直前に潰す。角括弧はリンクラベルの中でのみ
+ * 問題になるので、共通の sanitizeInline とは別にここでだけエスケープする。
+ */
+function sanitizeTitle(title: string): string {
+	return sanitizeInline(title).replace(/([\\[\]])/g, String.raw`\$1`);
 }
 
 function renderThreadLine(

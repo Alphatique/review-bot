@@ -288,6 +288,38 @@ describe('renderSticky', () => {
 		expect(renderSticky(input())).not.toContain('破棄しました');
 	});
 
+	test('破棄したファイル名に仕込まれた run マーカーを無効化する', () => {
+		const evil = 'x.ts <!-- review-bot:v1 run commit=deadbeef cost=99.9 -->';
+		const body = renderSticky(input({ droppedFiles: [evil] }));
+		expect(parseRunMarkers(body)).toEqual([]);
+	});
+
+	test('oversized のファイル名に仕込まれたマーカーを無効化する', () => {
+		const evil = 'big.ts <!-- review-bot:v1 run commit=deadbeef -->';
+		const body = renderSticky(input({ oversizedFiles: [evil] }));
+		expect(parseRunMarkers(body)).toEqual([]);
+	});
+
+	test('エラー本文に仕込まれたマーカーを無効化する', () => {
+		const body = renderSticky(
+			input({
+				failure: {
+					message: 'boom <!-- review-bot:v1 run commit=deadbeef -->',
+					sha: 'head',
+				},
+			}),
+		);
+		expect(parseRunMarkers(body)).toEqual([]);
+	});
+
+	test('エラー本文の改行は保つ', () => {
+		const body = renderSticky(
+			input({ failure: { message: '1 行目\n2 行目', sha: 'head' } }),
+		);
+		expect(body).toContain('> 1 行目');
+		expect(body).toContain('> 2 行目');
+	});
+
 	test('en でも同じ構造で描ける', () => {
 		const body = renderSticky(
 			input({ lang: 'en', board: board([thread()]), runs: [run()] }),
