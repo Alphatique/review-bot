@@ -3370,6 +3370,7 @@ git commit -m "docs: sticky サマリーと approve の挙動を README に反�
 Task 11 のレビューが、README の記述ではなく**挙動**の問題を掘り当てたことによる追加タスク。独立した 2 件だが、どちらも `orchestrate.ts` の同じ関数を触るため 1 タスクにまとめる。
 
 **Files:**
+
 - Modify: `src/core/decision.ts`
 - Modify: `src/io/github.ts`
 - Modify: `src/core/i18n.ts`
@@ -3440,26 +3441,26 @@ export type OwnVerdictState = 'APPROVED' | 'CHANGES_REQUESTED';
 `DecisionInput` に追加：
 
 ```ts
-	/** GitHub 上で生きている自分の判定。COMMENTED は判定ではないので含めない。 */
-	currentVerdict: OwnVerdictState | null;
+/** GitHub 上で生きている自分の判定。COMMENTED は判定ではないので含めない。 */
+currentVerdict: OwnVerdictState | null;
 ```
 
 `decideEvent` の REQUEST_CHANGES ブロックを差し替える：
 
 ```ts
-	if (input.threshold !== 'none' && input.canSubmitVerdict) {
-		const threshold: Severity = input.threshold;
-		const hasNew = input.newFindings.some(f =>
-			isAtLeastAsSevere(f.severity, threshold),
-		);
-		const hasUnresolved = unresolved.some(e =>
-			isAtLeastAsSevere(e.severity, threshold),
-		);
-		// 既に CHANGES_REQUESTED が生きているなら再提出しても状態は変わらない。
-		// 毎回出すと push のたびにコメント 0 件の Review と通知が積み上がる。
-		const alreadyBlocking = input.currentVerdict === 'CHANGES_REQUESTED';
-		if (hasNew || (hasUnresolved && !alreadyBlocking)) return 'REQUEST_CHANGES';
-	}
+if (input.threshold !== 'none' && input.canSubmitVerdict) {
+	const threshold: Severity = input.threshold;
+	const hasNew = input.newFindings.some(f =>
+		isAtLeastAsSevere(f.severity, threshold),
+	);
+	const hasUnresolved = unresolved.some(e =>
+		isAtLeastAsSevere(e.severity, threshold),
+	);
+	// 既に CHANGES_REQUESTED が生きているなら再提出しても状態は変わらない。
+	// 毎回出すと push のたびにコメント 0 件の Review と通知が積み上がる。
+	const alreadyBlocking = input.currentVerdict === 'CHANGES_REQUESTED';
+	if (hasNew || (hasUnresolved && !alreadyBlocking)) return 'REQUEST_CHANGES';
+}
 ```
 
 - [ ] **Step 3: `github.ts` の `dismissOwnApproval` を 2 つに割る**
@@ -3488,7 +3489,7 @@ export interface OwnVerdict {
 成功経路、`existing` を取った直後：
 
 ```ts
-	const ownVerdict = await github.getOwnVerdict();
+const ownVerdict = await github.getOwnVerdict();
 ```
 
 `decideEvent` の呼び出しに `currentVerdict: ownVerdict?.state ?? null` を足す。
@@ -3496,14 +3497,14 @@ export interface OwnVerdict {
 `abort()` の取り下げ処理を差し替える：
 
 ```ts
-		try {
-			const verdict = await github.getOwnVerdict();
-			if (verdict?.state === 'APPROVED') {
-				await github.dismissReview(verdict.id, DISMISS_MESSAGE);
-			}
-		} catch (dismissError) {
-			log(`could not dismiss the stale approval: ${describe(dismissError)}`);
-		}
+try {
+	const verdict = await github.getOwnVerdict();
+	if (verdict?.state === 'APPROVED') {
+		await github.dismissReview(verdict.id, DISMISS_MESSAGE);
+	}
+} catch (dismissError) {
+	log(`could not dismiss the stale approval: ${describe(dismissError)}`);
+}
 ```
 
 `abort()` は成功経路より前に走ることがあるので、ここでは独自に取り直す。
@@ -3515,7 +3516,7 @@ export interface OwnVerdict {
 - [ ] **Step 5: `i18n.ts` に文言を足す**
 
 ```ts
-	droppedWarning: (files: readonly string[]) => string;
+droppedWarning: (files: readonly string[]) => string;
 ```
 
 ```ts
@@ -3540,15 +3541,15 @@ export interface OwnVerdict {
 コメント組み立てループで、破棄した `finding.file` を集める。同じファイルに複数の指摘が来ても 1 回だけ出す。
 
 ```ts
-	const droppedFiles = new Set<string>();
+const droppedFiles = new Set<string>();
 ```
 
 ```ts
-		if (!analysis.commentableLines.has(finding.file)) {
-			log(`dropped a finding outside the diff: ${finding.file}`);
-			droppedFiles.add(finding.file);
-			continue;
-		}
+if (!analysis.commentableLines.has(finding.file)) {
+	log(`dropped a finding outside the diff: ${finding.file}`);
+	droppedFiles.add(finding.file);
+	continue;
+}
 ```
 
 `writeSticky` の呼び出しに `droppedFiles: [...droppedFiles]` を渡す。**成功経路のみ**。`abort()` と差分ゼロ経路は空配列でよい（そこには破棄が発生しない）。
