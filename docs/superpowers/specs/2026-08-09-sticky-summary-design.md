@@ -18,18 +18,18 @@ PR ごとに **1 つの、更新され続ける状態ボード**を持つ。PR �
 
 ## 決定事項
 
-| 論点 | 決定 |
-| --- | --- |
-| sticky の置き場所 | PR の issue comment。Review は毎回作らない |
-| 状態の保持 | 分散マーカー方式。sticky に隠し JSON は置かない |
-| サマリーの形 | 未解決は平積みリンク一覧、解決済み・履歴・実行情報は折りたたみ |
-| 指摘 body | サマリーに複製せずスレッドに置いたまま。サマリーは索引に徹する |
-| Review の作成 | 新規インラインコメントがあるか、イベント状態を変えたいときだけ |
-| 実行コスト | `run` マーカーに毎回記録し、sticky に PR 全体の累計を出す。失敗回も記録する |
-| sticky の更新 | 常に edit。削除して再投稿はしない |
-| APPROVE | opt-in（`approve` input、既定 `false`）。未解決 0 件のときだけ |
-| 手動 resolve | 誰が resolve したかは問わない。resolve を「対応済みの意思表示」とみなす |
-| outdated | 未解決として数え、行に `(outdated)` を付す |
+| 論点              | 決定                                                                        |
+| ----------------- | --------------------------------------------------------------------------- |
+| sticky の置き場所 | PR の issue comment。Review は毎回作らない                                  |
+| 状態の保持        | 分散マーカー方式。sticky に隠し JSON は置かない                             |
+| サマリーの形      | 未解決は平積みリンク一覧、解決済み・履歴・実行情報は折りたたみ              |
+| 指摘 body         | サマリーに複製せずスレッドに置いたまま。サマリーは索引に徹する              |
+| Review の作成     | 新規インラインコメントがあるか、イベント状態を変えたいときだけ              |
+| 実行コスト        | `run` マーカーに毎回記録し、sticky に PR 全体の累計を出す。失敗回も記録する |
+| sticky の更新     | 常に edit。削除して再投稿はしない                                           |
+| APPROVE           | opt-in（`approve` input、既定 `false`）。未解決 0 件のときだけ              |
+| 手動 resolve      | 誰が resolve したかは問わない。resolve を「対応済みの意思表示」とみなす     |
+| outdated          | 未解決として数え、行に `(outdated)` を付す                                  |
 
 ---
 
@@ -67,11 +67,11 @@ PR ごとに **1 つの、更新され続ける状態ボード**を持つ。PR �
 
 <details><summary>レビュー履歴 (3 回 · 合計 $0.61)</summary>
 
-| commit | 範囲 | 新規 | 判定 | コスト |
-| --- | --- | --- | --- | --- |
-| `a1b2c3d` | 増分 | 1 | 💬 COMMENT | $0.18 |
-| `77aa88b` | 増分 | — | ⚠️ 失敗 | $0.12 |
-| `9f8e7d6` | 全体 | 3 | 🔴 REQUEST_CHANGES | $0.31 |
+| commit    | 範囲 | 新規 | 判定               | コスト |
+| --------- | ---- | ---- | ------------------ | ------ |
+| `a1b2c3d` | 増分 | 1    | 💬 COMMENT         | $0.18  |
+| `77aa88b` | 増分 | —    | ⚠️ 失敗            | $0.12  |
+| `9f8e7d6` | 全体 | 3    | 🔴 REQUEST_CHANGES | $0.31  |
 
 </details>
 
@@ -98,8 +98,10 @@ PR ごとに **1 つの、更新され続ける状態ボード**を持つ。PR �
 
 失敗時は先頭に以下のバナーを差し込む。**それ以外のセクションはスレッドを取得し直して通常どおり再描画する**（エージェントが失敗しただけで GitHub API は生きているため）。前回の sticky 本文をパースして再利用することはしない。
 
-```markdown
-> ⚠️ 自動レビューを完了できませんでした。`a1b2c3d` は未レビューです。ワークフローを再実行するか、ジョブのログを確認してください。
+**バナーが名指しする sha は `reviewed` ではなく head である。** 失敗時この 2 つは必ず食い違う（`reviewed` は最後に成功した地点に据え置かれ、head は今回レビューできなかったコミット）。混同すると「`abc123` は未レビューです」の 1 行下に「`abc123` までレビュー済み」が並ぶ。実装ではエラー本文と sha を必ず一組で渡す型にして、片方だけ差し替えられないようにする。
+
+````markdown
+> ⚠️ 自動レビューを完了できませんでした。`def4567` は未レビューです。ワークフローを再実行するか、ジョブのログを確認してください。
 >
 > <details><summary>エラー概要</summary>
 >
@@ -108,7 +110,7 @@ PR ごとに **1 つの、更新され続ける状態ボード**を持つ。PR �
 > ```
 >
 > </details>
-```
+````
 
 差分がサイズ上限を超えてファイルが落ちた場合の警告（現行の `oversizedWarning`）も同様にバナー領域に出す。
 
@@ -148,25 +150,25 @@ sticky 本体              <!-- review-bot:v1 sticky reviewed=<sha> -->
 
 ## 4. モジュール構成
 
-| ファイル | 変更 |
-| --- | --- |
-| `src/core/marker.ts` | sticky / run マーカーの build・parse、タイトル抽出を追加。`SUMMARY_MARKER`・`FAILURE_MARKER` を削除 |
-| `src/core/board.ts` | **新規**。スレッド一覧を `{ outstanding, resolved }` に整理する純関数 |
-| `src/core/render.ts` | `renderSummary` / `renderFailureSummary` を `renderSticky` に統合。`renderInlineComment` は据え置き |
-| `src/core/decision.ts` | `ReviewEvent` に `APPROVE` と `NONE` を追加 |
-| `src/core/i18n.ts` | 新しい文言に差し替え |
-| `src/io/github.ts` | GraphQL に `path` / `line` / `url` / `body` を追加。sticky の find・upsert、`dismissReview`、`listOwnReviews` を追加 |
-| `src/config.ts` | `approve`（boolean、既定 `false`）を追加 |
-| `src/core/prompt.ts` | 「差分に含まれるファイル以外を指摘対象にしない」を明示 |
-| `src/io/agent.ts` | `AgentOutcome` に実行メトリクスを追加 |
-| `src/orchestrate.ts` | フロー全体。attempt ごとのメトリクスを合算する |
-| `action.yml` | `approve` input と 2 つの output を追加 |
+| ファイル               | 変更                                                                                                                 |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `src/core/marker.ts`   | sticky / run マーカーの build・parse、タイトル抽出を追加。`SUMMARY_MARKER`・`FAILURE_MARKER` を削除                  |
+| `src/core/board.ts`    | **新規**。スレッド一覧を `{ outstanding, resolved }` に整理する純関数                                                |
+| `src/core/render.ts`   | `renderSummary` / `renderFailureSummary` を `renderSticky` に統合。`renderInlineComment` は据え置き                  |
+| `src/core/decision.ts` | `ReviewEvent` に `APPROVE` と `NONE` を追加                                                                          |
+| `src/core/i18n.ts`     | 新しい文言に差し替え                                                                                                 |
+| `src/io/github.ts`     | GraphQL に `path` / `line` / `url` / `body` を追加。sticky の find・upsert、`dismissReview`、`listOwnReviews` を追加 |
+| `src/config.ts`        | `approve`（boolean、既定 `false`）を追加                                                                             |
+| `src/core/prompt.ts`   | 「差分に含まれるファイル以外を指摘対象にしない」を明示                                                               |
+| `src/io/agent.ts`      | `AgentOutcome` に実行メトリクスを追加                                                                                |
+| `src/orchestrate.ts`   | フロー全体。attempt ごとのメトリクスを合算する                                                                       |
+| `action.yml`           | `approve` input と 2 つの output を追加                                                                              |
 
 **outputs**。既存の `findings-count` などは今回の新規分を表す意味のまま変えない。累計コストを workflow 側から使えるよう、次の 2 つだけ追加する。
 
-| output | 内容 |
-| --- | --- |
-| `cost-usd` | この実行のコスト（全 attempt 合計） |
+| output           | 内容                                        |
+| ---------------- | ------------------------------------------- |
+| `cost-usd`       | この実行のコスト（全 attempt 合計）         |
 | `total-cost-usd` | PR 全体の累計コスト（`run` マーカーの合計） |
 
 未解決総数の output 追加はスコープに含めない。
@@ -179,20 +181,20 @@ sticky 本体              <!-- review-bot:v1 sticky reviewed=<sha> -->
 
 ```ts
 export interface ThreadInfo {
-  key: string;
-  severity: Severity;
-  title: string | null;   // パース失敗時は null
-  file: string;
-  line: number | null;
-  url: string;
-  isResolved: boolean;
-  isOutdated: boolean;
+	key: string;
+	severity: Severity;
+	title: string | null; // パース失敗時は null
+	file: string;
+	line: number | null;
+	url: string;
+	isResolved: boolean;
+	isOutdated: boolean;
 }
 
 export interface Board {
-  outstanding: ThreadInfo[];  // severity 昇順、同順位は file:line 順
-  resolved: ThreadInfo[];     // 同上
-  counts: Record<Severity, number>;  // outstanding のみ
+	outstanding: ThreadInfo[]; // severity 昇順、同順位は file:line 順
+	resolved: ThreadInfo[]; // 同上
+	counts: Record<Severity, number>; // outstanding のみ
 }
 
 export function buildBoard(threads: readonly ThreadInfo[]): Board;
@@ -218,13 +220,13 @@ dismissOwnApproval(message: string): Promise<void>;
 
 ```ts
 export interface AgentMetrics {
-  costUsd: number;
-  durationMs: number;
+	costUsd: number;
+	durationMs: number;
 }
 
 export type AgentOutcome =
-  | { ok: true; findings: Finding[]; metrics: AgentMetrics }
-  | { ok: false; error: string; metrics: AgentMetrics };
+	| { ok: true; findings: Finding[]; metrics: AgentMetrics }
+	| { ok: false; error: string; metrics: AgentMetrics };
 ```
 
 **失敗時もメトリクスを返す。** タイムアウトや予算超過は、そこまでに使ったぶんを消費済みだから。ただし `result` メッセージが届く前に abort された場合や、SDK が例外を投げた場合は値が取れない。そのときは `costUsd: 0` を返す。**これは「コストがかからなかった」ではなく「計測できなかった」を意味する** — 累計は下振れしうる。過大に見積もって PR に嘘の数字を出すよりは、取れたぶんだけを積む方を選ぶ。
@@ -312,15 +314,17 @@ threshold ≠ none かつ canRequestChanges かつ
 
 ## 8. エラー処理
 
-| 事象 | 挙動 |
-| --- | --- |
-| sticky の upsert 失敗 | ログに残して続行。レビュー自体は成功しているので落とさない。`reviewed` が進まないため次回同じ範囲を再レビューするが、`dedupe` により二重投稿はしない（安全側に倒れる） |
-| sticky を人が削除した | 次回新規作成。履歴は失われるがログに残す。`reviewed` も失われるため 1 回だけ全差分レビューになる |
-| fork PR | 現状のまま。`createReview` も `createComment` も試みずに abort |
-| エージェント失敗 | sticky に失敗バナー / `run` マーカーを `FAILED` で追記 / `reviewed` 据え置き / 自分の APPROVE を dismiss / `fail-on-error` に従う |
-| ファイル単位コメントの投稿失敗 | その指摘は board に載らない。ログに残し、レビュー全体は成功扱いとする |
-| 実行メトリクスを取得できない | `costUsd: 0` として記録し、累計は下振れする。過大な数字を出すよりは良いと判断する |
-| `run` マーカーのパース失敗 | その 1 行を無視して続行。履歴が 1 行減り累計が下振れするだけで、他の行は読める |
+| 事象                           | 挙動                                                                                                                                                                   |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| sticky の upsert 失敗          | ログに残して続行。レビュー自体は成功しているので落とさない。`reviewed` が進まないため次回同じ範囲を再レビューするが、`dedupe` により二重投稿はしない（安全側に倒れる） |
+| sticky を人が削除した          | 次回新規作成。履歴は失われるがログに残す。`reviewed` も失われるため 1 回だけ全差分レビューになる                                                                       |
+| fork PR                        | 現状のまま。`createReview` も `createComment` も試みずに abort                                                                                                         |
+| エージェント失敗               | sticky に失敗バナー / `run` マーカーを `FAILED` で追記 / `reviewed` 据え置き / 自分の APPROVE を dismiss / `fail-on-error` に従う                                      |
+| ファイル単位コメントの投稿失敗 | その指摘は board に載らない。ログに残し、レビュー全体は成功扱いとする                                                                                                  |
+| 実行メトリクスを取得できない   | `costUsd: 0` として記録し、累計は下振れする。過大な数字を出すよりは良いと判断する                                                                                      |
+| `run` マーカーのパース失敗     | その 1 行を無視して続行。履歴が 1 行減り累計が下振れするだけで、他の行は読める                                                                                         |
+| `findSticky` 自体が失敗した    | sticky を**書かない**。既存コメントの id が分からない状態で新規作成すると sticky が二重になり、以後どちらが正かを決められなくなる。ログにのみ残す                      |
+| その他の想定外の例外           | エージェント失敗と同じ経路に合流させ、バナーと `FAILED` の run マーカーを残す。握らずに抜けると sticky に痕跡が残らない                                                |
 
 ### 受容した残存リスク
 
@@ -335,6 +339,7 @@ threshold ≠ none かつ canRequestChanges かつ
 既存の純関数中心の方針を踏襲する。
 
 **`tests/core/marker.test.ts`**
+
 - sticky マーカーの build → parse 往復
 - run マーカーの build → parse 往復、複数行の順序保持
 - run マーカーの**未知キーを無視する**
@@ -346,6 +351,7 @@ threshold ≠ none かつ canRequestChanges かつ
 - タイトル書式が壊れている場合に `null` を返す
 
 **`tests/core/board.test.ts`（新規）**
+
 - 未解決 / 解決済みの振り分け
 - severity 昇順、同順位は `file:line` 順のソート
 - `isOutdated` かつ未解決が outstanding に入る
@@ -353,6 +359,7 @@ threshold ≠ none かつ canRequestChanges かつ
 - `counts` が outstanding のみを数える
 
 **`tests/core/render.test.ts`**
+
 - 未解決あり / 未解決ゼロ / 失敗バナーあり / 履歴あり の各形
 - 解決済みが `<details>` に入り、`### 未解決の指摘` は入らない
 - `(outdated)` の付与
@@ -362,6 +369,7 @@ threshold ≠ none かつ canRequestChanges かつ
 - `en` / `ja` 両方
 
 **`tests/core/decision.test.ts`**
+
 - `approve` off のとき未解決 0 でも APPROVE しない
 - `approve` on かつ未解決 0 で APPROVE
 - `approve` on でも未解決があれば APPROVE しない
@@ -369,6 +377,7 @@ threshold ≠ none かつ canRequestChanges かつ
 - 新規指摘もイベント変化もないとき `NONE`
 
 **`tests/orchestrate.test.ts`**
+
 - 指摘ゼロなら `createReview` を呼ばず sticky だけ更新する
 - 失敗時に `reviewed` が進まない
 - 失敗時に `run` マーカーが `event=FAILED` で追記され、コストが累計に乗る

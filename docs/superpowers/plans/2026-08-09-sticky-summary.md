@@ -22,29 +22,31 @@
 
 ## File Structure
 
-| ファイル | 責務 | タスク |
-| --- | --- | --- |
-| `src/core/marker.ts` | マーカーの build / parse とタイトル抽出。純関数のみ | 1 |
-| `src/core/board.ts` | **新規**。スレッド一覧を表示順の未解決 / 解決済みに整理 | 2 |
-| `src/core/decision.ts` | 提出イベントの決定 | 3 |
-| `src/core/i18n.ts` | 表示文言 | 4 |
-| `src/core/render.ts` | sticky 本文とインラインコメント本文の組み立て | 4 |
-| `src/io/agent.ts` | Agent 実行とメトリクス抽出 | 5 |
-| `src/io/github.ts` | GitHub API との境界 | 6 |
-| `src/config.ts` / `action.yml` / `src/main.ts` | 入出力の配線 | 7 |
-| `src/orchestrate.ts` | フローの組み立て | 8, 9 |
-| `src/core/prompt.ts` | モデルへの指示 | 10 |
-| `README.md` | ドキュメント | 11 |
+| ファイル                                       | 責務                                                    | タスク |
+| ---------------------------------------------- | ------------------------------------------------------- | ------ |
+| `src/core/marker.ts`                           | マーカーの build / parse とタイトル抽出。純関数のみ     | 1      |
+| `src/core/board.ts`                            | **新規**。スレッド一覧を表示順の未解決 / 解決済みに整理 | 2      |
+| `src/core/decision.ts`                         | 提出イベントの決定                                      | 3      |
+| `src/core/i18n.ts`                             | 表示文言                                                | 4      |
+| `src/core/render.ts`                           | sticky 本文とインラインコメント本文の組み立て           | 4      |
+| `src/io/agent.ts`                              | Agent 実行とメトリクス抽出                              | 5      |
+| `src/io/github.ts`                             | GitHub API との境界                                     | 6      |
+| `src/config.ts` / `action.yml` / `src/main.ts` | 入出力の配線                                            | 7      |
+| `src/orchestrate.ts`                           | フローの組み立て                                        | 8, 9   |
+| `src/core/prompt.ts`                           | モデルへの指示                                          | 10     |
+| `README.md`                                    | ドキュメント                                            | 11     |
 
 ---
 
 ## Task 1: マーカーの拡張（sticky / run / タイトル抽出）
 
 **Files:**
+
 - Modify: `src/core/marker.ts`
 - Test: `tests/core/marker.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Severity`, `SEVERITIES`（`src/core/schema.ts`、既存）
 - Produces:
   - `type RunEvent = 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE' | 'NONE' | 'FAILED'`
@@ -217,10 +219,7 @@ const STICKY_MARKER_RE = new RegExp(
 	'g',
 );
 const RUN_MARKER_RE = /<!--\s*review-bot:v1 run\s+([^>]*?)\s*-->/g;
-const RUN_FIELD_RE = new RegExp(
-	String.raw`([a-z]+)=(${MARKER_VALUE})`,
-	'g',
-);
+const RUN_FIELD_RE = new RegExp(String.raw`([a-z]+)=(${MARKER_VALUE})`, 'g');
 /** `renderInlineComment` が出す 1 行目。ここからタイトルを復元する。 */
 const INLINE_TITLE_RE = /\*\*(?:critical|major|minor)\*\*\s+—\s+(.+)$/;
 
@@ -366,10 +365,12 @@ git commit -m "feat(marker): sticky / run マーカーとタイトル抽出を�
 ## Task 2: `board.ts`（指摘の現在状態の組み立て）
 
 **Files:**
+
 - Create: `src/core/board.ts`
 - Test: `tests/core/board.test.ts`（新規）
 
 **Interfaces:**
+
 - Consumes: `Severity`, `SEVERITY_ORDER`（`src/core/schema.ts`、既存）
 - Produces:
   - `interface ThreadInfo { key: string; severity: Severity; title: string | null; file: string; line: number | null; url: string; isResolved: boolean; isOutdated: boolean }`
@@ -556,10 +557,12 @@ git commit -m "feat(board): PR 全体の指摘状態を組み立てる純関数�
 ## Task 3: `decision.ts` の APPROVE / NONE 対応
 
 **Files:**
+
 - Modify: `src/core/decision.ts`
 - Test: `tests/core/decision.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Severity`, `isAtLeastAsSevere`（`src/core/schema.ts`、既存）
 - Produces:
   - `type ReviewEvent = 'COMMENT' | 'REQUEST_CHANGES' | 'APPROVE'`
@@ -656,7 +659,9 @@ describe('decideEvent', () => {
 
 	test('approve が on かつ未解決ゼロなら APPROVE', () => {
 		expect(
-			decideEvent(input({ approve: true, existing: [existing('major', true)] })),
+			decideEvent(
+				input({ approve: true, existing: [existing('major', true)] }),
+			),
 		).toBe('APPROVE');
 	});
 
@@ -681,9 +686,9 @@ describe('decideEvent', () => {
 	});
 
 	test('bot 自身の PR には APPROVE も出さない', () => {
-		expect(
-			decideEvent(input({ approve: true, canSubmitVerdict: false })),
-		).toBe('NONE');
+		expect(decideEvent(input({ approve: true, canSubmitVerdict: false }))).toBe(
+			'NONE',
+		);
 	});
 
 	test('outdated かどうかは判定に影響しない', () => {
@@ -772,24 +777,24 @@ Expected: `src/orchestrate.ts` で `canRequestChanges` が無いという型エ�
 暫定で orchestrate をコンパイル可能に保つため、`src/orchestrate.ts:164-169` の `decideEvent` 呼び出しを次に差し替える。
 
 ```ts
-		const event = decideEvent({
-			newFindings: toPost,
-			existing,
-			threshold: config.requestChangesOn,
-			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
-			approve: false,
-		});
+const event = decideEvent({
+	newFindings: toPost,
+	existing,
+	threshold: config.requestChangesOn,
+	canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
+	approve: false,
+});
 ```
 
 `event` が `'NONE'` になりうるため、`github.createReview` へ渡す直前でガードを足す。Task 8 で正式なフローに置き換わる暫定コード。
 
 ```ts
-		await github.createReview({
-			body,
-			event: event === 'NONE' ? 'COMMENT' : event,
-			commitId: pr.headSha,
-			comments: inline,
-		});
+await github.createReview({
+	body,
+	event: event === 'NONE' ? 'COMMENT' : event,
+	commitId: pr.headSha,
+	comments: inline,
+});
 ```
 
 - [ ] **Step 6: 型・lint・全テスト**
@@ -809,11 +814,13 @@ git commit -m "feat(decision): APPROVE と NONE を追加し verdict のゲー�
 ## Task 4: `i18n.ts` と `render.ts`（sticky 本文の描画）
 
 **Files:**
+
 - Modify: `src/core/i18n.ts`
 - Modify: `src/core/render.ts`
 - Test: `tests/core/render.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Board`, `ThreadInfo`（Task 2） / `RunRecord`, `buildStickyMarker`, `buildRunMarker`, `totalCostUsd`（Task 1）
 - Produces:
   - `interface LatestRun { model: string; effort: string; seconds: number; costUsd: number; attempts: number }`
@@ -1035,13 +1042,17 @@ describe('renderSticky', () => {
 	});
 
 	test('line が null ならファイルパスだけを出す', () => {
-		const body = renderSticky(input({ board: board([thread({ line: null })]) }));
+		const body = renderSticky(
+			input({ board: board([thread({ line: null })]) }),
+		);
 		expect(body).toContain('— `src/io/github.ts`');
 		expect(body).not.toContain('github.ts:');
 	});
 
 	test('title が null ならフォールバック文言を使う', () => {
-		const body = renderSticky(input({ board: board([thread({ title: null })]) }));
+		const body = renderSticky(
+			input({ board: board([thread({ title: null })]) }),
+		);
 		expect(body).toContain('[(タイトル不明)](https://example.test/1)');
 	});
 
@@ -1065,7 +1076,9 @@ describe('renderSticky', () => {
 				runs: [run({ costUsd: 0.18 }), run({ commit: 'b', costUsd: 0.31 })],
 			}),
 		);
-		expect(body).toContain('<summary>レビュー履歴 (2 回 · 合計 $0.49)</summary>');
+		expect(body).toContain(
+			'<summary>レビュー履歴 (2 回 · 合計 $0.49)</summary>',
+		);
 		expect(body).toContain('| $0.18 |');
 		expect(body).toContain('| $0.31 |');
 	});
@@ -1197,7 +1210,7 @@ Expected: FAIL（`renderSticky` が export されていない）
 
 `src/core/render.ts` を丸ごと次の内容にする。
 
-```ts
+````ts
 import type { Board, ThreadInfo } from './board';
 import type { KeyedFinding } from './dedupe';
 import { type Language, type LatestRun, messages } from './i18n';
@@ -1398,7 +1411,7 @@ function renderHistory(
 		'</details>',
 	];
 }
-```
+````
 
 - [ ] **Step 5: テストが通ることを確認**
 
@@ -1422,10 +1435,12 @@ git commit -m "feat(render): sticky サマリーの描画を追加"
 ## Task 5: `agent.ts` の実行メトリクス
 
 **Files:**
+
 - Modify: `src/io/agent.ts`
 - Test: `tests/io/agent-metrics.test.ts`（新規）
 
 **Interfaces:**
+
 - Produces:
   - `interface AgentMetrics { costUsd: number; durationMs: number }`
   - `extractMetrics(message: unknown): AgentMetrics | null`
@@ -1525,16 +1540,16 @@ function toFiniteNumber(value: unknown): number {
 1. `let captured` の下にメトリクス保持を足す。共有の定数オブジェクトを既定値にすると、呼び出し側が `metrics` を書き換えたときに全実行に波及しうるので、リテラルを直接持たせる。
 
 ```ts
-	let metrics: AgentMetrics = { costUsd: 0, durationMs: 0 };
+let metrics: AgentMetrics = { costUsd: 0, durationMs: 0 };
 ```
 
 2. メッセージループの `result` 分岐でメトリクスを拾う。
 
 ```ts
-			if (message.type === 'result') {
-				metrics = extractMetrics(message) ?? metrics;
-				input.log(`agent result: ${JSON.stringify(message).slice(0, 500)}`);
-			}
+if (message.type === 'result') {
+	metrics = extractMetrics(message) ?? metrics;
+	input.log(`agent result: ${JSON.stringify(message).slice(0, 500)}`);
+}
 ```
 
 3. `catch` と各 `return` に `metrics` を足す。
@@ -1584,11 +1599,11 @@ Expected: PASS
 `AgentOutcome` に `metrics` が必須で入ったので、`src/orchestrate.ts:133` のリテラルが型エラーになる。次に差し替える。
 
 ```ts
-		let outcome: AgentOutcome = {
-			ok: false,
-			error: 'not attempted',
-			metrics: { costUsd: 0, durationMs: 0 },
-		};
+let outcome: AgentOutcome = {
+	ok: false,
+	error: 'not attempted',
+	metrics: { costUsd: 0, durationMs: 0 },
+};
 ```
 
 このタスクではここだけ直せばよい。合算とリトライ回数の記録は Task 8 の仕事なので、`spent` の導入や `attempts` の集計はここでは**やらない**。
@@ -1630,10 +1645,12 @@ git commit -m "feat(agent): 実行コストと所要時間を呼び出し側へ�
 ## Task 6: `github.ts` の拡張（sticky / スレッド詳細 / ファイル単位コメント / dismiss）
 
 **Files:**
+
 - Modify: `src/io/github.ts`
 - Modify: `src/core/dedupe.ts`
 
 **Interfaces:**
+
 - Consumes: `ThreadInfo`（Task 2） / `hasStickyMarker`, `parseInlineTitle`, `parseInlineMarker`（Task 1） / `ReviewEvent`（Task 3）
 - Produces（`GitHubClient`）:
   - `getPullRequest(): Promise<PullRequestInfo>`（既存）
@@ -1650,6 +1667,7 @@ git commit -m "feat(agent): 実行コストと所要時間を呼び出し側へ�
 - [ ] **Step 1: `subject_type` が使えるか確認する**
 
 Run:
+
 ```bash
 grep -n "subject_type" node_modules/@octokit/openapi-types/types.d.ts | head -20
 ```
@@ -1823,8 +1841,7 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 	const isOwnComment = (
 		user: { login?: string; type?: string } | null | undefined,
 		login: string | null,
-	): boolean =>
-		login === null ? user?.type === 'Bot' : user?.login === login;
+	): boolean => (login === null ? user?.type === 'Bot' : user?.login === login);
 
 	return {
 		async getPullRequest() {
@@ -1892,12 +1909,15 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 
 		async findSticky() {
 			const login = await resolveSelfLogin();
-			const comments = await octokit.paginate(octokit.rest.issues.listComments, {
-				owner,
-				repo,
-				issue_number: prNumber,
-				per_page: 100,
-			});
+			const comments = await octokit.paginate(
+				octokit.rest.issues.listComments,
+				{
+					owner,
+					repo,
+					issue_number: prNumber,
+					per_page: 100,
+				},
+			);
 
 			for (const comment of comments) {
 				const body = comment.body ?? '';
@@ -2035,54 +2055,54 @@ Expected: `src/orchestrate.ts` と `tests/orchestrate.test.ts` で `listExisting
 `tests/orchestrate.test.ts` の `setup` のフェイクも同様に追従させる。
 
 ```ts
-	const github: GitHubClient = {
-		getPullRequest: async () => ({ ...PR, ...options.pr }),
-		getDiff: async (from, to) => {
-			diffRequests.push({ from, to });
-			return options.diff ?? DIFF;
-		},
-		listThreads: async () => options.threads ?? [],
-		findSticky: async () =>
-			options.lastReviewed
-				? { commentId: 1, body: buildStickyMarker(options.lastReviewed) }
-				: null,
-		upsertSticky: async input => {
-			stickyWrites.push(input);
-		},
-		createReview: async input => {
-			reviews.push(input);
-		},
-		dismissOwnApproval: async message => {
-			dismissals.push(message);
-		},
-	};
+const github: GitHubClient = {
+	getPullRequest: async () => ({ ...PR, ...options.pr }),
+	getDiff: async (from, to) => {
+		diffRequests.push({ from, to });
+		return options.diff ?? DIFF;
+	},
+	listThreads: async () => options.threads ?? [],
+	findSticky: async () =>
+		options.lastReviewed
+			? { commentId: 1, body: buildStickyMarker(options.lastReviewed) }
+			: null,
+	upsertSticky: async input => {
+		stickyWrites.push(input);
+	},
+	createReview: async input => {
+		reviews.push(input);
+	},
+	dismissOwnApproval: async message => {
+		dismissals.push(message);
+	},
+};
 ```
 
 `FakeOptions` の `existing` を `threads?: ThreadInfo[]` に改名し、`existing` を使っている 2 件のテストを `ThreadInfo` のリテラルに書き換える。
 
 ```ts
-	test('既存と重複する指摘は再投稿しない', async () => {
-		const f = finding();
-		const { deps, reviews } = setup({
-			outcomes: [
-				{ ok: true, findings: [f], metrics: { costUsd: 0, durationMs: 0 } },
-			],
-			threads: [
-				{
-					key: findingKey(f.file, f.title),
-					severity: 'major',
-					title: f.title,
-					file: f.file,
-					line: f.line,
-					url: 'https://example.test/1',
-					isResolved: false,
-					isOutdated: false,
-				},
-			],
-		});
-		await runReview(deps, CONFIG);
-		expect(reviews[0]?.comments ?? []).toHaveLength(0);
+test('既存と重複する指摘は再投稿しない', async () => {
+	const f = finding();
+	const { deps, reviews } = setup({
+		outcomes: [
+			{ ok: true, findings: [f], metrics: { costUsd: 0, durationMs: 0 } },
+		],
+		threads: [
+			{
+				key: findingKey(f.file, f.title),
+				severity: 'major',
+				title: f.title,
+				file: f.file,
+				line: f.line,
+				url: 'https://example.test/1',
+				isResolved: false,
+				isOutdated: false,
+			},
+		],
 	});
+	await runReview(deps, CONFIG);
+	expect(reviews[0]?.comments ?? []).toHaveLength(0);
+});
 ```
 
 - [ ] **Step 5: 型・lint・全テスト**
@@ -2102,12 +2122,14 @@ git commit -m "feat(github): sticky コメントとスレッド詳細の取得�
 ## Task 7: `approve` input と コスト output の配線
 
 **Files:**
+
 - Modify: `src/config.ts`
 - Modify: `action.yml`
 - Modify: `src/main.ts`
 - Test: `tests/config.test.ts`
 
 **Interfaces:**
+
 - Produces: `Config.approve: boolean` / `RunResult.costUsd: number` / `RunResult.totalCostUsd: number`
 
 `RunResult` への 2 フィールド追加は Task 8 で実装するが、`main.ts` の配線はここで済ませておくと Task 8 が orchestrate 1 ファイルに集中できる。**このタスクでは `RunResult` にフィールドを足すところまでやる**（値は 0 固定でよい。Task 8 で埋める）。
@@ -2150,7 +2172,7 @@ Expected: FAIL（`approve` が `Config` に無い）
 `Config` インターフェースの `requestChangesOn` の下に足す。
 
 ```ts
-	approve: boolean;
+approve: boolean;
 ```
 
 `loadConfig` の戻り値、`failOnIncomplete` の下に足す。
@@ -2164,35 +2186,35 @@ Expected: FAIL（`approve` が `Config` に無い）
 `inputs` の `request-changes-on` の直後に足す。
 
 ```yaml
-  approve:
-    description: 'Submit the review as APPROVE when the pull request has no outstanding findings. Off by default; a bot approval must not be relied on as a branch-protection gate.'
-    required: false
-    default: 'false'
+approve:
+  description: 'Submit the review as APPROVE when the pull request has no outstanding findings. Off by default; a bot approval must not be relied on as a branch-protection gate.'
+  required: false
+  default: 'false'
 ```
 
 `outputs` の `review-event` の description を差し替える。
 
 ```yaml
-  review-event:
-    description: 'COMMENT, REQUEST_CHANGES, APPROVE, or NONE'
-    value: ${{ steps.review.outputs['review-event'] }}
+review-event:
+  description: 'COMMENT, REQUEST_CHANGES, APPROVE, or NONE'
+  value: ${{ steps.review.outputs['review-event'] }}
 ```
 
 `outputs` の `incomplete-files` の後に足す。
 
 ```yaml
-  cost-usd:
-    description: 'Cost of this run in USD, summed across retries'
-    value: ${{ steps.review.outputs['cost-usd'] }}
-  total-cost-usd:
-    description: 'Cumulative cost of every review run on this pull request in USD'
-    value: ${{ steps.review.outputs['total-cost-usd'] }}
+cost-usd:
+  description: 'Cost of this run in USD, summed across retries'
+  value: ${{ steps.review.outputs['cost-usd'] }}
+total-cost-usd:
+  description: 'Cumulative cost of every review run on this pull request in USD'
+  value: ${{ steps.review.outputs['total-cost-usd'] }}
 ```
 
 `runs.steps[1].env` の `INPUT_REQUEST-CHANGES-ON` の直後に足す。
 
 ```yaml
-        INPUT_APPROVE: ${{ inputs.approve }}
+INPUT_APPROVE: ${{ inputs.approve }}
 ```
 
 - [ ] **Step 5: `main.ts` を変更する**
@@ -2202,8 +2224,8 @@ Expected: FAIL（`approve` が `Config` に無い）
 `core.setOutput` の並びに足す。
 
 ```ts
-	core.setOutput('cost-usd', result.costUsd.toFixed(4));
-	core.setOutput('total-cost-usd', result.totalCostUsd.toFixed(4));
+core.setOutput('cost-usd', result.costUsd.toFixed(4));
+core.setOutput('total-cost-usd', result.totalCostUsd.toFixed(4));
 ```
 
 - [ ] **Step 6: `orchestrate.ts` の `RunResult` に 2 フィールド足す**
@@ -2242,12 +2264,14 @@ git commit -m "feat(config): approve input とコスト output を追加"
 ## Task 8: `orchestrate.ts` の成功パス
 
 **Files:**
+
 - Modify: `src/orchestrate.ts`
 - Modify: `src/core/marker.ts`（`SUMMARY_MARKER` / `FAILURE_MARKER` / `hasSummaryMarker` / `hasFailureMarker` を削除）
 - Modify: `tests/core/marker.test.ts`（削除した関数のテストを消す）
 - Test: `tests/orchestrate.test.ts`
 
 **Interfaces:**
+
 - Consumes: Task 1〜7 の全て
 - Produces: `runReview(deps, config): Promise<RunResult>`（フロー全体）
 
@@ -2256,222 +2280,222 @@ git commit -m "feat(config): approve input とコスト output を追加"
 `tests/orchestrate.test.ts` に追記する（Task 4 で skip した 3 件のうち、サマリ落ちの 2 件は削除する。ファイル単位コメントに変わったため）。
 
 ```ts
-	test('行を特定できない指摘はファイル単位コメントとして投稿する', async () => {
-		const { deps, reviews } = setup({
-			outcomes: [
-				{
-					ok: true,
-					findings: [finding({ line: null })],
-					metrics: { costUsd: 0, durationMs: 0 },
-				},
-			],
-		});
-		await runReview(deps, CONFIG);
-		expect(reviews[0]!.comments).toHaveLength(1);
-		expect(reviews[0]!.comments[0]!.line).toBeNull();
-		expect(reviews[0]!.comments[0]!.path).toBe('src/a.ts');
-	});
-
-	test('差分に無い行の指摘もファイル単位コメントにする', async () => {
-		const { deps, reviews } = setup({
-			outcomes: [
-				{
-					ok: true,
-					findings: [finding({ line: 999 })],
-					metrics: { costUsd: 0, durationMs: 0 },
-				},
-			],
-		});
-		await runReview(deps, CONFIG);
-		expect(reviews[0]!.comments[0]!.line).toBeNull();
-	});
-
-	test('差分に無いファイルの指摘は破棄する', async () => {
-		const { deps, reviews } = setup({
-			outcomes: [
-				{
-					ok: true,
-					findings: [finding({ file: 'src/other.ts' })],
-					metrics: { costUsd: 0, durationMs: 0 },
-				},
-			],
-		});
-		const result = await runReview(deps, CONFIG);
-		expect(reviews).toHaveLength(0);
-		expect(result.findingsCount).toBe(0);
-	});
-
-	test('指摘ゼロなら Review を作らず sticky だけ更新する', async () => {
-		const { deps, reviews, stickyWrites } = setup();
-		const result = await runReview(deps, CONFIG);
-		expect(reviews).toHaveLength(0);
-		expect(stickyWrites).toHaveLength(1);
-		expect(result.event).toBe('NONE');
-		expect(result.status).toBe('success');
-	});
-
-	test('sticky に head sha を書き込む', async () => {
-		const { deps, stickyWrites } = setup();
-		await runReview(deps, CONFIG);
-		expect(stickyWrites[0]!.body).toContain(
-			'<!-- review-bot:v1 sticky reviewed=head -->',
-		);
-	});
-
-	test('sticky が無ければ新規作成する', async () => {
-		const { deps, stickyWrites } = setup();
-		await runReview(deps, CONFIG);
-		expect(stickyWrites[0]!.commentId).toBeNull();
-	});
-
-	test('sticky があれば同じコメントを更新する', async () => {
-		const { deps, stickyWrites } = setup({ lastReviewed: 'prev' });
-		await runReview(deps, CONFIG);
-		expect(stickyWrites[0]!.commentId).toBe(1);
-	});
-
-	test('run マーカーを追記し、過去分を残す', async () => {
-		const { deps, stickyWrites } = setup({
-			sticky: {
-				commentId: 1,
-				body: `${buildStickyMarker('prev')}\n${buildRunMarker({
-					commit: 'prev',
-					mode: 'auto',
-					newFindings: 2,
-					event: 'COMMENT',
-					costUsd: 0.5,
-					seconds: 30,
-					attempts: 1,
-					model: 'claude-sonnet-5',
-					effort: 'high',
-				})}`,
+test('行を特定できない指摘はファイル単位コメントとして投稿する', async () => {
+	const { deps, reviews } = setup({
+		outcomes: [
+			{
+				ok: true,
+				findings: [finding({ line: null })],
+				metrics: { costUsd: 0, durationMs: 0 },
 			},
-		});
-		await runReview(deps, CONFIG);
-		const runs = parseRunMarkers(stickyWrites[0]!.body);
-		expect(runs.map(r => r.commit)).toEqual(['prev', 'head']);
+		],
 	});
+	await runReview(deps, CONFIG);
+	expect(reviews[0]!.comments).toHaveLength(1);
+	expect(reviews[0]!.comments[0]!.line).toBeNull();
+	expect(reviews[0]!.comments[0]!.path).toBe('src/a.ts');
+});
 
-	test('コストを合算して返す', async () => {
-		const { deps } = setup({
-			outcomes: [
-				{
-					ok: false,
-					error: 'boom',
-					metrics: { costUsd: 0.1, durationMs: 1000 },
-				},
-				{
-					ok: true,
-					findings: [],
-					metrics: { costUsd: 0.2, durationMs: 2000 },
-				},
-			],
-		});
-		const result = await runReview(deps, CONFIG);
-		expect(result.costUsd).toBeCloseTo(0.3, 4);
-	});
-
-	test('リトライ回数を run マーカーに書く', async () => {
-		const { deps, stickyWrites } = setup({
-			outcomes: [
-				{
-					ok: false,
-					error: 'boom',
-					metrics: { costUsd: 0.1, durationMs: 1000 },
-				},
-				{
-					ok: true,
-					findings: [],
-					metrics: { costUsd: 0.2, durationMs: 2000 },
-				},
-			],
-		});
-		await runReview(deps, CONFIG);
-		expect(parseRunMarkers(stickyWrites[0]!.body)[0]!.attempts).toBe(2);
-	});
-
-	test('累計コストは過去の run マーカーを含む', async () => {
-		const { deps } = setup({
-			sticky: {
-				commentId: 1,
-				body: `${buildStickyMarker('prev')}\n${buildRunMarker({
-					commit: 'prev',
-					mode: 'auto',
-					newFindings: 0,
-					event: 'NONE',
-					costUsd: 0.5,
-					seconds: 10,
-					attempts: 1,
-					model: 'm',
-					effort: 'high',
-				})}`,
+test('差分に無い行の指摘もファイル単位コメントにする', async () => {
+	const { deps, reviews } = setup({
+		outcomes: [
+			{
+				ok: true,
+				findings: [finding({ line: 999 })],
+				metrics: { costUsd: 0, durationMs: 0 },
 			},
-			outcomes: [
-				{
-					ok: true,
-					findings: [],
-					metrics: { costUsd: 0.25, durationMs: 1000 },
-				},
-			],
-		});
-		const result = await runReview(deps, CONFIG);
-		expect(result.totalCostUsd).toBeCloseTo(0.75, 4);
+		],
 	});
+	await runReview(deps, CONFIG);
+	expect(reviews[0]!.comments[0]!.line).toBeNull();
+});
 
-	test('approve が有効で未解決ゼロなら APPROVE を出す', async () => {
-		const { deps, reviews } = setup();
-		const result = await runReview(deps, { ...CONFIG, approve: true });
-		expect(result.event).toBe('APPROVE');
-		expect(reviews[0]!.event).toBe('APPROVE');
+test('差分に無いファイルの指摘は破棄する', async () => {
+	const { deps, reviews } = setup({
+		outcomes: [
+			{
+				ok: true,
+				findings: [finding({ file: 'src/other.ts' })],
+				metrics: { costUsd: 0, durationMs: 0 },
+			},
+		],
 	});
+	const result = await runReview(deps, CONFIG);
+	expect(reviews).toHaveLength(0);
+	expect(result.findingsCount).toBe(0);
+});
 
-	test('sticky の upsert が失敗してもレビューは成功扱い', async () => {
-		const { deps } = setup({ stickyWriteError: new Error('rate limited') });
-		const result = await runReview(deps, CONFIG);
-		expect(result.status).toBe('success');
-	});
+test('指摘ゼロなら Review を作らず sticky だけ更新する', async () => {
+	const { deps, reviews, stickyWrites } = setup();
+	const result = await runReview(deps, CONFIG);
+	expect(reviews).toHaveLength(0);
+	expect(stickyWrites).toHaveLength(1);
+	expect(result.event).toBe('NONE');
+	expect(result.status).toBe('success');
+});
 
-	test('想定外の例外も sticky に失敗バナーとして残す', async () => {
-		const { deps, stickyWrites, reviews } = setup({
-			diffError: new Error('502 from GitHub'),
-		});
-		const result = await runReview(deps, CONFIG);
-		expect(result.status).toBe('failed');
-		expect(result.error).toContain('502 from GitHub');
-		expect(reviews).toHaveLength(0);
-		expect(stickyWrites).toHaveLength(1);
-		expect(stickyWrites[0]!.body).toContain('502 from GitHub');
-		expect(parseRunMarkers(stickyWrites[0]!.body)[0]!.event).toBe('FAILED');
-	});
+test('sticky に head sha を書き込む', async () => {
+	const { deps, stickyWrites } = setup();
+	await runReview(deps, CONFIG);
+	expect(stickyWrites[0]!.body).toContain(
+		'<!-- review-bot:v1 sticky reviewed=head -->',
+	);
+});
 
-	test('sticky を特定できないまま失敗したら sticky を書かない', async () => {
-		// findSticky が失敗した状態で新規作成すると sticky が二重になる。
-		const { deps, stickyWrites } = setup({
-			stickyLookupError: new Error('403'),
-		});
-		const result = await runReview(deps, CONFIG);
-		expect(result.status).toBe('failed');
-		expect(stickyWrites).toHaveLength(0);
-	});
+test('sticky が無ければ新規作成する', async () => {
+	const { deps, stickyWrites } = setup();
+	await runReview(deps, CONFIG);
+	expect(stickyWrites[0]!.commentId).toBeNull();
+});
 
-	test('board の再取得結果を sticky に描く', async () => {
-		const { deps, stickyWrites } = setup({
-			threadsAfterReview: [
-				{
-					key: 'b'.repeat(12),
-					severity: 'critical',
-					title: '再取得で見えた指摘',
-					file: 'src/a.ts',
-					line: 2,
-					url: 'https://example.test/9',
-					isResolved: false,
-					isOutdated: false,
-				},
-			],
-		});
-		await runReview(deps, CONFIG);
-		expect(stickyWrites[0]!.body).toContain('再取得で見えた指摘');
+test('sticky があれば同じコメントを更新する', async () => {
+	const { deps, stickyWrites } = setup({ lastReviewed: 'prev' });
+	await runReview(deps, CONFIG);
+	expect(stickyWrites[0]!.commentId).toBe(1);
+});
+
+test('run マーカーを追記し、過去分を残す', async () => {
+	const { deps, stickyWrites } = setup({
+		sticky: {
+			commentId: 1,
+			body: `${buildStickyMarker('prev')}\n${buildRunMarker({
+				commit: 'prev',
+				mode: 'auto',
+				newFindings: 2,
+				event: 'COMMENT',
+				costUsd: 0.5,
+				seconds: 30,
+				attempts: 1,
+				model: 'claude-sonnet-5',
+				effort: 'high',
+			})}`,
+		},
 	});
+	await runReview(deps, CONFIG);
+	const runs = parseRunMarkers(stickyWrites[0]!.body);
+	expect(runs.map(r => r.commit)).toEqual(['prev', 'head']);
+});
+
+test('コストを合算して返す', async () => {
+	const { deps } = setup({
+		outcomes: [
+			{
+				ok: false,
+				error: 'boom',
+				metrics: { costUsd: 0.1, durationMs: 1000 },
+			},
+			{
+				ok: true,
+				findings: [],
+				metrics: { costUsd: 0.2, durationMs: 2000 },
+			},
+		],
+	});
+	const result = await runReview(deps, CONFIG);
+	expect(result.costUsd).toBeCloseTo(0.3, 4);
+});
+
+test('リトライ回数を run マーカーに書く', async () => {
+	const { deps, stickyWrites } = setup({
+		outcomes: [
+			{
+				ok: false,
+				error: 'boom',
+				metrics: { costUsd: 0.1, durationMs: 1000 },
+			},
+			{
+				ok: true,
+				findings: [],
+				metrics: { costUsd: 0.2, durationMs: 2000 },
+			},
+		],
+	});
+	await runReview(deps, CONFIG);
+	expect(parseRunMarkers(stickyWrites[0]!.body)[0]!.attempts).toBe(2);
+});
+
+test('累計コストは過去の run マーカーを含む', async () => {
+	const { deps } = setup({
+		sticky: {
+			commentId: 1,
+			body: `${buildStickyMarker('prev')}\n${buildRunMarker({
+				commit: 'prev',
+				mode: 'auto',
+				newFindings: 0,
+				event: 'NONE',
+				costUsd: 0.5,
+				seconds: 10,
+				attempts: 1,
+				model: 'm',
+				effort: 'high',
+			})}`,
+		},
+		outcomes: [
+			{
+				ok: true,
+				findings: [],
+				metrics: { costUsd: 0.25, durationMs: 1000 },
+			},
+		],
+	});
+	const result = await runReview(deps, CONFIG);
+	expect(result.totalCostUsd).toBeCloseTo(0.75, 4);
+});
+
+test('approve が有効で未解決ゼロなら APPROVE を出す', async () => {
+	const { deps, reviews } = setup();
+	const result = await runReview(deps, { ...CONFIG, approve: true });
+	expect(result.event).toBe('APPROVE');
+	expect(reviews[0]!.event).toBe('APPROVE');
+});
+
+test('sticky の upsert が失敗してもレビューは成功扱い', async () => {
+	const { deps } = setup({ stickyWriteError: new Error('rate limited') });
+	const result = await runReview(deps, CONFIG);
+	expect(result.status).toBe('success');
+});
+
+test('想定外の例外も sticky に失敗バナーとして残す', async () => {
+	const { deps, stickyWrites, reviews } = setup({
+		diffError: new Error('502 from GitHub'),
+	});
+	const result = await runReview(deps, CONFIG);
+	expect(result.status).toBe('failed');
+	expect(result.error).toContain('502 from GitHub');
+	expect(reviews).toHaveLength(0);
+	expect(stickyWrites).toHaveLength(1);
+	expect(stickyWrites[0]!.body).toContain('502 from GitHub');
+	expect(parseRunMarkers(stickyWrites[0]!.body)[0]!.event).toBe('FAILED');
+});
+
+test('sticky を特定できないまま失敗したら sticky を書かない', async () => {
+	// findSticky が失敗した状態で新規作成すると sticky が二重になる。
+	const { deps, stickyWrites } = setup({
+		stickyLookupError: new Error('403'),
+	});
+	const result = await runReview(deps, CONFIG);
+	expect(result.status).toBe('failed');
+	expect(stickyWrites).toHaveLength(0);
+});
+
+test('board の再取得結果を sticky に描く', async () => {
+	const { deps, stickyWrites } = setup({
+		threadsAfterReview: [
+			{
+				key: 'b'.repeat(12),
+				severity: 'critical',
+				title: '再取得で見えた指摘',
+				file: 'src/a.ts',
+				line: 2,
+				url: 'https://example.test/9',
+				isResolved: false,
+				isOutdated: false,
+			},
+		],
+	});
+	await runReview(deps, CONFIG);
+	expect(stickyWrites[0]!.body).toContain('再取得で見えた指摘');
+});
 ```
 
 `setup` を次のように拡張する。
@@ -2780,146 +2804,147 @@ export async function runReview(
 	};
 
 	try {
-	sticky = await github.findSticky();
-	stickyResolved = true;
-	previousRuns = sticky ? parseRunMarkers(sticky.body) : [];
-	lastReviewed = sticky
-		? (parseStickyMarker(sticky.body)?.reviewed ?? null)
-		: null;
+		sticky = await github.findSticky();
+		stickyResolved = true;
+		previousRuns = sticky ? parseRunMarkers(sticky.body) : [];
+		lastReviewed = sticky
+			? (parseStickyMarker(sticky.body)?.reviewed ?? null)
+			: null;
 
-	const from = config.mode === 'full' ? pr.baseSha : (lastReviewed ?? pr.baseSha);
-	log(`reviewing ${from}...${pr.headSha} (mode=${config.mode})`);
+		const from =
+			config.mode === 'full' ? pr.baseSha : (lastReviewed ?? pr.baseSha);
+		log(`reviewing ${from}...${pr.headSha} (mode=${config.mode})`);
 
-	const rawDiff = await github.getDiff(from, pr.headSha);
-	const analysis = analyzeDiff(rawDiff, {
-		exclude: config.exclude,
-		maxBytes: config.diffMaxBytes,
-	});
-	oversizedFiles = analysis.oversizedFiles;
+		const rawDiff = await github.getDiff(from, pr.headSha);
+		const analysis = analyzeDiff(rawDiff, {
+			exclude: config.exclude,
+			maxBytes: config.diffMaxBytes,
+		});
+		oversizedFiles = analysis.oversizedFiles;
 
-	if (analysis.text.trim() === '') {
-		log('no reviewable changes');
+		if (analysis.text.trim() === '') {
+			log('no reviewable changes');
+			await writeSticky({
+				reviewedSha: pr.headSha,
+				runs: previousRuns,
+				board: buildBoard(await github.listThreads()),
+				latest: null,
+				failure: null,
+			});
+			return {
+				status: 'success',
+				event: 'NONE',
+				counts: emptyCounts(),
+				findingsCount: 0,
+				incompleteFiles: oversizedFiles.length,
+				costUsd: 0,
+				totalCostUsd: totalCostUsd(previousRuns),
+				error: null,
+			};
+		}
+
+		const instructions =
+			(await deps.readInstructions(config.instructionsFile)) ??
+			DEFAULT_INSTRUCTIONS;
+
+		const prompt = buildPrompt({
+			instructions,
+			repo: config.repo,
+			prNumber: pr.number,
+			prTitle: pr.title,
+			diff: analysis.text,
+			lang: config.language,
+			oversizedFiles: analysis.oversizedFiles,
+			toolName: SUBMIT_TOOL_NAME,
+		});
+
+		let outcome: AgentOutcome = {
+			ok: false,
+			error: 'not attempted',
+			metrics: { costUsd: 0, durationMs: 0 },
+		};
+
+		for (let attempt = 1; attempt <= config.maxRetries; attempt += 1) {
+			attempts = attempt;
+			log(`agent attempt ${attempt}/${config.maxRetries}`);
+			outcome = await deps.runAgent({ prompt });
+			spent.costUsd += outcome.metrics.costUsd;
+			spent.durationMs += outcome.metrics.durationMs;
+			if (outcome.ok) break;
+			log(`attempt ${attempt} failed: ${outcome.error}`);
+		}
+
+		if (!outcome.ok) return await abort(outcome.error);
+
+		const existing = await github.listThreads();
+		const { toPost } = dedupe(outcome.findings, existing);
+
+		const comments: InlineCommentInput[] = [];
+		const posted: KeyedFinding[] = [];
+		for (const finding of toPost) {
+			// 差分に無いファイルは投稿先が無い。プロンプトで禁止している（Task 10）が、
+			// それでも出てきた場合は破棄してログに残す。
+			if (!analysis.commentableLines.has(finding.file)) {
+				log(`dropped a finding outside the diff: ${finding.file}`);
+				continue;
+			}
+			// 行が差分内に無ければファイル単位コメントに落とす。スレッドは立つので
+			// サマリーの索引には載る。
+			const line = isCommentable(analysis, finding.file, finding.line ?? -1)
+				? finding.line
+				: null;
+			comments.push({
+				path: finding.file,
+				line,
+				body: renderInlineComment(finding, config.language),
+			});
+			posted.push(finding);
+		}
+
+		const event = decideEvent({
+			newFindings: posted,
+			existing,
+			threshold: config.requestChangesOn,
+			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
+			approve: config.approve,
+		});
+
+		if (event !== 'NONE') {
+			await github.createReview({
+				body: messages(config.language).reviewPointer,
+				event,
+				commitId: pr.headSha,
+				comments,
+			});
+		}
+
+		// 投稿後に取り直す。サマリーを常に GitHub の現状から組み立てるため。
+		const threads = event === 'NONE' ? existing : await github.listThreads();
+		const runs = record(event, posted.length);
+
 		await writeSticky({
 			reviewedSha: pr.headSha,
-			runs: previousRuns,
-			board: buildBoard(await github.listThreads()),
-			latest: null,
+			runs,
+			board: buildBoard(threads),
+			latest: latestRun(),
 			failure: null,
 		});
+
+		const counts = emptyCounts();
+		for (const finding of posted) counts[finding.severity] += 1;
+
+		log(`posted ${comments.length} comment(s), event=${event}`);
+
 		return {
 			status: 'success',
-			event: 'NONE',
-			counts: emptyCounts(),
-			findingsCount: 0,
+			event,
+			counts,
+			findingsCount: posted.length,
 			incompleteFiles: oversizedFiles.length,
-			costUsd: 0,
-			totalCostUsd: totalCostUsd(previousRuns),
+			costUsd: spent.costUsd,
+			totalCostUsd: totalCostUsd(runs),
 			error: null,
 		};
-	}
-
-	const instructions =
-		(await deps.readInstructions(config.instructionsFile)) ??
-		DEFAULT_INSTRUCTIONS;
-
-	const prompt = buildPrompt({
-		instructions,
-		repo: config.repo,
-		prNumber: pr.number,
-		prTitle: pr.title,
-		diff: analysis.text,
-		lang: config.language,
-		oversizedFiles: analysis.oversizedFiles,
-		toolName: SUBMIT_TOOL_NAME,
-	});
-
-	let outcome: AgentOutcome = {
-		ok: false,
-		error: 'not attempted',
-		metrics: { costUsd: 0, durationMs: 0 },
-	};
-
-	for (let attempt = 1; attempt <= config.maxRetries; attempt += 1) {
-		attempts = attempt;
-		log(`agent attempt ${attempt}/${config.maxRetries}`);
-		outcome = await deps.runAgent({ prompt });
-		spent.costUsd += outcome.metrics.costUsd;
-		spent.durationMs += outcome.metrics.durationMs;
-		if (outcome.ok) break;
-		log(`attempt ${attempt} failed: ${outcome.error}`);
-	}
-
-	if (!outcome.ok) return await abort(outcome.error);
-
-	const existing = await github.listThreads();
-	const { toPost } = dedupe(outcome.findings, existing);
-
-	const comments: InlineCommentInput[] = [];
-	const posted: KeyedFinding[] = [];
-	for (const finding of toPost) {
-		// 差分に無いファイルは投稿先が無い。プロンプトで禁止している（Task 10）が、
-		// それでも出てきた場合は破棄してログに残す。
-		if (!analysis.commentableLines.has(finding.file)) {
-			log(`dropped a finding outside the diff: ${finding.file}`);
-			continue;
-		}
-		// 行が差分内に無ければファイル単位コメントに落とす。スレッドは立つので
-		// サマリーの索引には載る。
-		const line = isCommentable(analysis, finding.file, finding.line ?? -1)
-			? finding.line
-			: null;
-		comments.push({
-			path: finding.file,
-			line,
-			body: renderInlineComment(finding, config.language),
-		});
-		posted.push(finding);
-	}
-
-	const event = decideEvent({
-		newFindings: posted,
-		existing,
-		threshold: config.requestChangesOn,
-		canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
-		approve: config.approve,
-	});
-
-	if (event !== 'NONE') {
-		await github.createReview({
-			body: messages(config.language).reviewPointer,
-			event,
-			commitId: pr.headSha,
-			comments,
-		});
-	}
-
-	// 投稿後に取り直す。サマリーを常に GitHub の現状から組み立てるため。
-	const threads = event === 'NONE' ? existing : await github.listThreads();
-	const runs = record(event, posted.length);
-
-	await writeSticky({
-		reviewedSha: pr.headSha,
-		runs,
-		board: buildBoard(threads),
-		latest: latestRun(),
-		failure: null,
-	});
-
-	const counts = emptyCounts();
-	for (const finding of posted) counts[finding.severity] += 1;
-
-	log(`posted ${comments.length} comment(s), event=${event}`);
-
-	return {
-		status: 'success',
-		event,
-		counts,
-		findingsCount: posted.length,
-		incompleteFiles: oversizedFiles.length,
-		costUsd: spent.costUsd,
-		totalCostUsd: totalCostUsd(runs),
-		error: null,
-	};
 	} catch (error) {
 		// ここを抜けた例外は main() を落とすだけで sticky に何も残らない。
 		// 失敗経路に合流させ、バナーと FAILED の run マーカーを残す。
@@ -2939,18 +2964,18 @@ function describe(error: unknown): string {
 **注意:** `createReview` の `body` を空文字にすると GitHub が 422 を返す可能性がある。`event: 'COMMENT'` は body 必須。実装時に実 API で確認できないため、**安全側として 1 行のポインタを入れる**。
 
 ```ts
-		await github.createReview({
-			body: messages(config.language).reviewPointer,
-			event,
-			commitId: pr.headSha,
-			comments,
-		});
+await github.createReview({
+	body: messages(config.language).reviewPointer,
+	event,
+	commitId: pr.headSha,
+	comments,
+});
 ```
 
 `i18n.ts` の `Messages` に足す。
 
 ```ts
-	reviewPointer: string;
+reviewPointer: string;
 ```
 
 ```ts
@@ -2970,9 +2995,11 @@ function describe(error: unknown): string {
 4. `src/core/i18n.ts` の `Messages` から旧キー 10 個 — `summaryHeading` / `noFindings` / `findingsCount` / `incrementalNote` / `fullNote` / `unlocatableHeading` / `unlocatableNote` / `failureHeading` / `failureBody` / `instructionSource` — と `EN` / `JA` の対応する値。`oversizedWarning` と `errorDetails` は新しい描画でも使うので**残す**
 
 Run:
+
 ```bash
 grep -rn "SUMMARY_MARKER\|FAILURE_MARKER\|hasSummaryMarker\|hasFailureMarker\|renderSummary\|renderFailureSummary\|SummaryInput\|instructionSource" src tests
 ```
+
 Expected: 出力なし
 
 - [ ] **Step 5: テストが通ることを確認**
@@ -2997,104 +3024,104 @@ git commit -m "feat(orchestrate): sticky を状態の持ち主にしてフロー
 ## Task 9: 失敗パスのテストを固める
 
 **Files:**
+
 - Test: `tests/orchestrate.test.ts`
 
 Task 8 で失敗パスの実装は済んでいる。ここではその挙動をテストで固定する。実装に不足があればここで直す。
 
 **Interfaces:**
+
 - Consumes: Task 8 の `runReview`
 
 - [ ] **Step 1: 失敗するテストを書く**
 
 ```ts
-	test('リトライを使い切ったら sticky に失敗バナーを出す', async () => {
-		const boom = {
-			ok: false as const,
-			error: 'agent timed out',
-			metrics: { costUsd: 0.04, durationMs: 1000 },
-		};
-		const { deps, reviews, stickyWrites } = setup({
-			outcomes: [boom, boom, boom],
-		});
-		const result = await runReview(deps, CONFIG);
-		expect(result.status).toBe('failed');
-		expect(reviews).toHaveLength(0);
-		expect(stickyWrites).toHaveLength(1);
-		expect(stickyWrites[0]!.body).toContain('agent timed out');
-		expect(stickyWrites[0]!.body).toContain(
-			'自動レビューを完了できませんでした',
-		);
+test('リトライを使い切ったら sticky に失敗バナーを出す', async () => {
+	const boom = {
+		ok: false as const,
+		error: 'agent timed out',
+		metrics: { costUsd: 0.04, durationMs: 1000 },
+	};
+	const { deps, reviews, stickyWrites } = setup({
+		outcomes: [boom, boom, boom],
 	});
+	const result = await runReview(deps, CONFIG);
+	expect(result.status).toBe('failed');
+	expect(reviews).toHaveLength(0);
+	expect(stickyWrites).toHaveLength(1);
+	expect(stickyWrites[0]!.body).toContain('agent timed out');
+	expect(stickyWrites[0]!.body).toContain('自動レビューを完了できませんでした');
+});
 
-	test('失敗時に reviewed を進めない', async () => {
-		const boom = {
-			ok: false as const,
-			error: 'boom',
-			metrics: { costUsd: 0, durationMs: 0 },
-		};
-		const { deps, stickyWrites } = setup({
-			lastReviewed: 'prev',
-			outcomes: [boom, boom, boom],
-		});
-		await runReview(deps, CONFIG);
-		expect(stickyWrites[0]!.body).toContain(
-			'<!-- review-bot:v1 sticky reviewed=prev -->',
-		);
+test('失敗時に reviewed を進めない', async () => {
+	const boom = {
+		ok: false as const,
+		error: 'boom',
+		metrics: { costUsd: 0, durationMs: 0 },
+	};
+	const { deps, stickyWrites } = setup({
+		lastReviewed: 'prev',
+		outcomes: [boom, boom, boom],
 	});
+	await runReview(deps, CONFIG);
+	expect(stickyWrites[0]!.body).toContain(
+		'<!-- review-bot:v1 sticky reviewed=prev -->',
+	);
+});
 
-	test('sticky が無い状態で失敗したら base に据え置く', async () => {
-		const boom = {
-			ok: false as const,
-			error: 'boom',
-			metrics: { costUsd: 0, durationMs: 0 },
-		};
-		const { deps, stickyWrites } = setup({ outcomes: [boom, boom, boom] });
-		await runReview(deps, CONFIG);
-		expect(stickyWrites[0]!.body).toContain(
-			'<!-- review-bot:v1 sticky reviewed=base -->',
-		);
-	});
+test('sticky が無い状態で失敗したら base に据え置く', async () => {
+	const boom = {
+		ok: false as const,
+		error: 'boom',
+		metrics: { costUsd: 0, durationMs: 0 },
+	};
+	const { deps, stickyWrites } = setup({ outcomes: [boom, boom, boom] });
+	await runReview(deps, CONFIG);
+	expect(stickyWrites[0]!.body).toContain(
+		'<!-- review-bot:v1 sticky reviewed=base -->',
+	);
+});
 
-	test('失敗時に FAILED の run マーカーを追記しコストを乗せる', async () => {
-		const boom = {
-			ok: false as const,
-			error: 'boom',
-			metrics: { costUsd: 0.04, durationMs: 1000 },
-		};
-		const { deps, stickyWrites } = setup({ outcomes: [boom, boom, boom] });
-		const result = await runReview(deps, CONFIG);
-		const runs = parseRunMarkers(stickyWrites[0]!.body);
-		expect(runs).toHaveLength(1);
-		expect(runs[0]!.event).toBe('FAILED');
-		expect(runs[0]!.attempts).toBe(3);
-		expect(result.costUsd).toBeCloseTo(0.12, 4);
-		expect(result.totalCostUsd).toBeCloseTo(0.12, 4);
-	});
+test('失敗時に FAILED の run マーカーを追記しコストを乗せる', async () => {
+	const boom = {
+		ok: false as const,
+		error: 'boom',
+		metrics: { costUsd: 0.04, durationMs: 1000 },
+	};
+	const { deps, stickyWrites } = setup({ outcomes: [boom, boom, boom] });
+	const result = await runReview(deps, CONFIG);
+	const runs = parseRunMarkers(stickyWrites[0]!.body);
+	expect(runs).toHaveLength(1);
+	expect(runs[0]!.event).toBe('FAILED');
+	expect(runs[0]!.attempts).toBe(3);
+	expect(result.costUsd).toBeCloseTo(0.12, 4);
+	expect(result.totalCostUsd).toBeCloseTo(0.12, 4);
+});
 
-	test('失敗時に自分の APPROVE を取り下げる', async () => {
-		const boom = {
-			ok: false as const,
-			error: 'boom',
-			metrics: { costUsd: 0, durationMs: 0 },
-		};
-		const { deps, dismissals } = setup({ outcomes: [boom, boom, boom] });
-		await runReview(deps, CONFIG);
-		expect(dismissals).toHaveLength(1);
-	});
+test('失敗時に自分の APPROVE を取り下げる', async () => {
+	const boom = {
+		ok: false as const,
+		error: 'boom',
+		metrics: { costUsd: 0, durationMs: 0 },
+	};
+	const { deps, dismissals } = setup({ outcomes: [boom, boom, boom] });
+	await runReview(deps, CONFIG);
+	expect(dismissals).toHaveLength(1);
+});
 
-	test('成功時は APPROVE を取り下げない', async () => {
-		const { deps, dismissals } = setup();
-		await runReview(deps, CONFIG);
-		expect(dismissals).toHaveLength(0);
-	});
+test('成功時は APPROVE を取り下げない', async () => {
+	const { deps, dismissals } = setup();
+	await runReview(deps, CONFIG);
+	expect(dismissals).toHaveLength(0);
+});
 
-	test('fork PR では sticky も書かない', async () => {
-		const { deps, stickyWrites, reviews } = setup({ pr: { isFork: true } });
-		const result = await runReview(deps, CONFIG);
-		expect(result.status).toBe('failed');
-		expect(stickyWrites).toHaveLength(0);
-		expect(reviews).toHaveLength(0);
-	});
+test('fork PR では sticky も書かない', async () => {
+	const { deps, stickyWrites, reviews } = setup({ pr: { isFork: true } });
+	const result = await runReview(deps, CONFIG);
+	expect(result.status).toBe('failed');
+	expect(stickyWrites).toHaveLength(0);
+	expect(reviews).toHaveLength(0);
+});
 ```
 
 - [ ] **Step 2: テストを走らせる**
@@ -3119,10 +3146,12 @@ git commit -m "test(orchestrate): 失敗パスの挙動を固定する"
 ## Task 10: プロンプトで差分外の指摘を禁止する
 
 **Files:**
+
 - Modify: `src/core/prompt.ts`
 - Test: `tests/core/prompt.test.ts`
 
 **Interfaces:**
+
 - Consumes: `buildPrompt`（既存）
 
 行を特定できない指摘はファイル単位コメントに落ちるが、**差分に含まれないファイル**への指摘は投稿先が無い。プロンプトで防ぐ。
@@ -3132,10 +3161,10 @@ git commit -m "test(orchestrate): 失敗パスの挙動を固定する"
 `tests/core/prompt.test.ts` に追記する。
 
 ```ts
-	test('差分外のファイルを指摘対象にしないよう指示する', () => {
-		const prompt = buildPrompt(baseInput());
-		expect(prompt).toContain('差分に含まれるファイル以外を指摘対象にしない');
-	});
+test('差分外のファイルを指摘対象にしないよう指示する', () => {
+	const prompt = buildPrompt(baseInput());
+	expect(prompt).toContain('差分に含まれるファイル以外を指摘対象にしない');
+});
 ```
 
 `baseInput()` は既存テストが使っているヘルパ。無ければ既存テストの入力リテラルに合わせる。
@@ -3177,6 +3206,7 @@ git commit -m "feat(prompt): 差分外のファイルへの指摘を禁止する
 ## Task 11: README の更新とビルド確認
 
 **Files:**
+
 - Modify: `README.md`
 
 - [ ] **Step 1: Inputs 表に `approve` を足す**
@@ -3184,7 +3214,7 @@ git commit -m "feat(prompt): 差分外のファイルへの指摘を禁止する
 `request-changes-on` の行の直後に足す。
 
 ```markdown
-| `approve`                 | `false`                          | Submit as `APPROVE` when the pull request has no outstanding findings. See the warning below. |
+| `approve` | `false` | Submit as `APPROVE` when the pull request has no outstanding findings. See the warning below. |
 ```
 
 - [ ] **Step 2: Outputs 表を更新する**
@@ -3192,14 +3222,14 @@ git commit -m "feat(prompt): 差分外のファイルへの指摘を禁止する
 `review-event` の説明を `COMMENT`, `REQUEST_CHANGES`, `APPROVE`, or `NONE` に変える。末尾に 2 行足す。
 
 ```markdown
-| `cost-usd`         | Cost of this run in USD, summed across retries                   |
-| `total-cost-usd`   | Cumulative cost of every review run on this pull request         |
+| `cost-usd` | Cost of this run in USD, summed across retries |
+| `total-cost-usd` | Cumulative cost of every review run on this pull request |
 ```
 
 - [ ] **Step 3: `max-cost-usd` の説明を補足する**
 
 ```markdown
-| `max-cost-usd`            | `5`                              | Budget ceiling for **a single agent run**. With `max-retries: 3` a single job can spend up to three times this. The cumulative spend is shown in the summary comment. |
+| `max-cost-usd` | `5` | Budget ceiling for **a single agent run**. With `max-retries: 3` a single job can spend up to three times this. The cumulative spend is shown in the summary comment. |
 ```
 
 - [ ] **Step 4: 冒頭の説明を書き直す**
@@ -3275,20 +3305,20 @@ git commit -m "docs: sticky サマリーと approve の挙動を README に反�
 
 **1. Spec coverage**
 
-| spec の節 | 実装タスク |
-| --- | --- |
-| 1. アーキテクチャ転換 | Task 1（マーカー追加）/ Task 8（旧マーカー削除） |
-| 2. sticky サマリーの形 | Task 4 |
-| 3. マーカー定義 | Task 1 |
-| 4. モジュール構成 | Task 1〜8 |
-| 5. データフロー | Task 8 |
-| 6. APPROVE の設計 | Task 3（判定）/ Task 7（input）/ Task 8, 9（提出と dismiss） |
-| 7. resolve と outdated | Task 2（board）/ Task 3（判定）/ Task 4（表示） |
-| 8. エラー処理 | Task 8（sticky 失敗・エージェント失敗）/ Task 9（テスト）/ Task 10（差分外破棄） |
-| 9. テスト計画 | 各タスクの Step 1 |
-| 10. README | Task 11 |
-| 11. 移行 | 互換シムを作らないので実装不要。Task 11 の README で言及なし（v2 タグはリリース時の作業） |
-| 12. バックログ | 実装しない |
+| spec の節              | 実装タスク                                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------------- |
+| 1. アーキテクチャ転換  | Task 1（マーカー追加）/ Task 8（旧マーカー削除）                                          |
+| 2. sticky サマリーの形 | Task 4                                                                                    |
+| 3. マーカー定義        | Task 1                                                                                    |
+| 4. モジュール構成      | Task 1〜8                                                                                 |
+| 5. データフロー        | Task 8                                                                                    |
+| 6. APPROVE の設計      | Task 3（判定）/ Task 7（input）/ Task 8, 9（提出と dismiss）                              |
+| 7. resolve と outdated | Task 2（board）/ Task 3（判定）/ Task 4（表示）                                           |
+| 8. エラー処理          | Task 8（sticky 失敗・エージェント失敗）/ Task 9（テスト）/ Task 10（差分外破棄）          |
+| 9. テスト計画          | 各タスクの Step 1                                                                         |
+| 10. README             | Task 11                                                                                   |
+| 11. 移行               | 互換シムを作らないので実装不要。Task 11 の README で言及なし（v2 タグはリリース時の作業） |
+| 12. バックログ         | 実装しない                                                                                |
 
 **2. 未確定事項（実装中に潰す）**
 
