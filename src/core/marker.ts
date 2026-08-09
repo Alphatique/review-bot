@@ -11,6 +11,18 @@ export const SUMMARY_MARKER = '<!-- review-bot:v1 summary -->';
  */
 export const FAILURE_MARKER = '<!-- review-bot:v1 failure -->';
 
+/**
+ * この Action が投稿した Review だと識別するマーカー。
+ * GITHUB_TOKEN では自分の identity を確定できず Bot 判定にフォールバックする
+ * ため、`dismissOwnApproval` が他 App の Review を「自分のもの」と誤認しない
+ * よう、投稿者判定とこのマーカーの AND で絞り込む。
+ */
+export const REVIEW_MARKER = '<!-- review-bot:v1 review -->';
+
+export function hasReviewMarker(body: string): boolean {
+	return body.includes(REVIEW_MARKER);
+}
+
 const INLINE_MARKER_RE =
 	/<!--\s*review-bot:v1 key=([0-9a-f]{12}) sev=([a-z]+)\s*-->/g;
 

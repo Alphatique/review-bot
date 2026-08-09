@@ -2,9 +2,11 @@ import { getOctokit } from '@actions/github';
 import type { ThreadInfo } from '../core/board';
 import type { ReviewEvent } from '../core/decision';
 import {
+	hasReviewMarker,
 	hasStickyMarker,
 	parseInlineMarker,
 	parseInlineTitle,
+	REVIEW_MARKER,
 } from '../core/marker';
 
 export interface PullRequestInfo {
@@ -51,6 +53,8 @@ export interface GitHubClientOptions {
 	owner: string;
 	repo: string;
 	prNumber: number;
+	/** 失敗しても続行する操作の記録先。 */
+	log: (message: string) => void;
 }
 
 interface ReviewThreadsResponse {
@@ -104,7 +108,14 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 		try {
 			const { data } = await octokit.rest.users.getAuthenticated();
 			selfLogin = data.login;
-		} catch {
+		} catch (error) {
+			// identity を確定できないと Bot 判定に落ちる。無言だと
+			// sticky が毎回増える形で劣化するので、必ず記録する。
+			options.log(
+				`could not resolve the token identity, falling back to bot detection: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
 			selfLogin = null;
 		}
 		return selfLogin;
@@ -227,7 +238,9 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 				repo,
 				pull_number: prNumber,
 				commit_id: input.commitId,
-				body: input.body,
+				// dismissOwnApproval が「自分の Review」を識別できるよう、
+				// 投稿者判定だけに頼らずマーカーも埋め込む。
+				body: `${input.body.trimEnd()}\n\n${REVIEW_MARKER}\n`,
 				event: input.event,
 				comments: inline.map(comment => ({
 					path: comment.path,
@@ -240,15 +253,25 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 			// createReview の comments[] は subject_type を受け付けないため、
 			// ファイル単位コメントだけは個別に投稿する。
 			for (const comment of fileLevel) {
-				await octokit.rest.pulls.createReviewComment({
-					owner,
-					repo,
-					pull_number: prNumber,
-					commit_id: input.commitId,
-					path: comment.path,
-					body: comment.body,
-					subject_type: 'file',
-				});
+				try {
+					await octokit.rest.pulls.createReviewComment({
+						owner,
+						repo,
+						pull_number: prNumber,
+						commit_id: input.commitId,
+						path: comment.path,
+						body: comment.body,
+						subject_type: 'file',
+					});
+				} catch (error) {
+					// 1 件の失敗でレビュー全体を落とさない。Review 本文と
+					// インラインコメントは既に投稿済みで、やり直すと二重になる。
+					options.log(
+						`could not post a file-level comment on ${comment.path}: ${
+							error instanceof Error ? error.message : String(error)
+						}`,
+					);
+				}
 			}
 		},
 
@@ -263,11 +286,19 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 
 			for (let i = reviews.length - 1; i >= 0; i -= 1) {
 				const review = reviews[i]!;
+				// GITHUB_TOKEN では identity を確定できず Bot 判定に落ちるため、
+				// 投稿者判定だけでは他 App の Review と区別できない。マーカーとの
+				// AND で絞り、他 App の承認を誤って取り下げないようにする。
 				if (!isOwnComment(review.user, login)) continue;
-				// COMMENTED は承認状態を上書きしない。GitHub は各レビュアーの
-				// 「最新の APPROVED / CHANGES_REQUESTED」を見るので、間に
-				// COMMENTED を挟んでも前の APPROVED は生きている。読み飛ばす。
-				if (review.state === 'COMMENTED' || review.state === 'DISMISSED') {
+				if (!hasReviewMarker(review.body ?? '')) continue;
+				// APPROVED / CHANGES_REQUESTED 以外は「最新の承認状態」を
+				// 左右しない。COMMENTED は GitHub 側で承認状態を上書きしない
+				// し、PENDING（書きかけの Review）もまだ提出されていないので
+				// 同様に無視できる。許可リストにして読み飛ばす。
+				if (
+					review.state !== 'APPROVED' &&
+					review.state !== 'CHANGES_REQUESTED'
+				) {
 					continue;
 				}
 				// ここに来るのは APPROVED か CHANGES_REQUESTED。後者なら

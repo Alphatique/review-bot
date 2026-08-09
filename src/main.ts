@@ -63,6 +63,7 @@ async function main(): Promise<void> {
 			owner,
 			repo: repoName,
 			prNumber: config.prNumber,
+			log: message => core.info(message),
 		}),
 		runAgent: ({ prompt }) =>
 			runAgent({
