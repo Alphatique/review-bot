@@ -49,5 +49,5 @@ export function decideEvent(input: DecisionInput): EventDecision {
 		if (hasNew || hasUnresolved) return 'REQUEST_CHANGES';
 	}
 
-	return (input.newFindings.length > 0 || unresolved.length > 0) ? 'COMMENT' : 'NONE';
+	return input.newFindings.length > 0 ? 'COMMENT' : 'NONE';
 }

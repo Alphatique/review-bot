@@ -82,12 +82,18 @@ describe('decideEvent', () => {
 		).toBe('APPROVE');
 	});
 
-	test('approve が on でも未解決があれば APPROVE しない', () => {
+	test('approve が on でも未解決があれば APPROVE せず Review も作らない', () => {
 		expect(
 			decideEvent(
 				input({ approve: true, existing: [existing('minor', false)] }),
 			),
-		).toBe('COMMENT');
+		).toBe('NONE');
+	});
+
+	test('未解決が残っていても新規指摘が無ければ Review を作らない', () => {
+		expect(
+			decideEvent(input({ existing: [existing('minor', false)] })),
+		).toBe('NONE');
 	});
 
 	test('approve が on でも今回の新規指摘があれば APPROVE しない', () => {
