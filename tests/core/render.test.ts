@@ -100,13 +100,17 @@ describe('renderSticky', () => {
 	});
 
 	test('line が null ならファイルパスだけを出す', () => {
-		const body = renderSticky(input({ board: board([thread({ line: null })]) }));
+		const body = renderSticky(
+			input({ board: board([thread({ line: null })]) }),
+		);
 		expect(body).toContain('— `src/io/github.ts`');
 		expect(body).not.toContain('github.ts:');
 	});
 
 	test('title が null ならフォールバック文言を使う', () => {
-		const body = renderSticky(input({ board: board([thread({ title: null })]) }));
+		const body = renderSticky(
+			input({ board: board([thread({ title: null })]) }),
+		);
 		expect(body).toContain('[(タイトル不明)](https://example.test/1)');
 	});
 
@@ -130,7 +134,9 @@ describe('renderSticky', () => {
 				runs: [run({ costUsd: 0.18 }), run({ commit: 'b', costUsd: 0.31 })],
 			}),
 		);
-		expect(body).toContain('<summary>レビュー履歴 (2 回 · 合計 $0.49)</summary>');
+		expect(body).toContain(
+			'<summary>レビュー履歴 (2 回 · 合計 $0.49)</summary>',
+		);
 		expect(body).toContain('| $0.18 |');
 		expect(body).toContain('| $0.31 |');
 	});
