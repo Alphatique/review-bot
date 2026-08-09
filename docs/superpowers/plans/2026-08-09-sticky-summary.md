@@ -3124,6 +3124,66 @@ test('fork PR では sticky も書かない', async () => {
 });
 ```
 
+**`setup` に足すフェイクのフック。** 次の 4 件は `abort()` が個別に握っている例外経路と、Task 8 のレビューが「コード読解でしか確認できていない」と指摘した性質を検証する。`FakeOptions` に `dismissError?: Error` と `threadsError?: Error` を足し、`dismissOwnApproval` と `listThreads` がそれぞれ投げられるようにすること。`listThreads` は成功経路でも呼ばれるので、`threadsError` が指定されたときだけ投げる形にする。
+
+```ts
+test('APPROVE の取り下げが失敗してもバナーは書かれる', async () => {
+	const boom = {
+		ok: false as const,
+		error: 'boom',
+		metrics: { costUsd: 0, durationMs: 0 },
+	};
+	const { deps, stickyWrites } = setup({
+		outcomes: [boom, boom, boom],
+		dismissError: new Error('403'),
+	});
+	const result = await runReview(deps, CONFIG);
+	expect(result.status).toBe('failed');
+	expect(stickyWrites).toHaveLength(1);
+	expect(stickyWrites[0]!.body).toContain('boom');
+});
+
+test('スレッド取得が失敗してもバナーは書かれる', async () => {
+	const boom = {
+		ok: false as const,
+		error: 'boom',
+		metrics: { costUsd: 0, durationMs: 0 },
+	};
+	const { deps, stickyWrites } = setup({
+		outcomes: [boom, boom, boom],
+		threadsError: new Error('502'),
+	});
+	const result = await runReview(deps, CONFIG);
+	expect(result.status).toBe('failed');
+	expect(stickyWrites[0]!.body).toContain('boom');
+});
+
+test('エージェントが走る前に失敗したら実行情報を出さない', async () => {
+	// attempts が 0 のまま実行情報を出すと「エージェントが走ってコストゼロ
+	// だった」ように読める。
+	const { deps, stickyWrites } = setup({
+		diffError: new Error('502 from GitHub'),
+	});
+	await runReview(deps, CONFIG);
+	expect(stickyWrites[0]!.body).not.toContain('実行情報');
+});
+
+test('Review の body は空にしない', async () => {
+	// event: COMMENT の Review に空 body を渡すと GitHub が 422 を返す。
+	const { deps, reviews } = setup({
+		outcomes: [
+			{
+				ok: true,
+				findings: [finding({ line: 2 })],
+				metrics: { costUsd: 0, durationMs: 0 },
+			},
+		],
+	});
+	await runReview(deps, CONFIG);
+	expect(reviews[0]!.body.trim().length).toBeGreaterThan(0);
+});
+```
+
 - [ ] **Step 2: テストを走らせる**
 
 Run: `bun test tests/orchestrate.test.ts`
