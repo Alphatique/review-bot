@@ -3225,12 +3225,13 @@ git commit -m "test(orchestrate): 失敗パスの挙動を固定する"
 
 ```ts
 test('差分外のファイルを指摘対象にしないよう指示する', () => {
-	const prompt = buildPrompt(baseInput());
-	expect(prompt).toContain('差分に含まれるファイル以外を指摘対象にしない');
+	expect(buildPrompt(BASE)).toContain(
+		'差分に含まれるファイル以外を指摘対象にしない',
+	);
 });
 ```
 
-`baseInput()` は既存テストが使っているヘルパ。無ければ既存テストの入力リテラルに合わせる。
+`BASE` は `tests/core/prompt.test.ts` の先頭に既にある入力リテラル。新しくヘルパを作らず、既存テストと同じ書き方に合わせること。
 
 - [ ] **Step 2: テストが落ちることを確認**
 
