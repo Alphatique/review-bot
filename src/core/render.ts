@@ -49,6 +49,8 @@ export interface StickyInput {
 	/** 失敗したときのエラー本文と、レビューできなかった commit。成功時は null。 */
 	failure: { message: string; sha: string } | null;
 	oversizedFiles: readonly string[];
+	/** 差分に無いファイルを狙っていたため破棄した指摘のファイル名。重複排除済み。 */
+	droppedFiles: readonly string[];
 }
 
 export function renderSticky(input: StickyInput): string {
@@ -76,6 +78,10 @@ export function renderSticky(input: StickyInput): string {
 
 	if (input.oversizedFiles.length > 0) {
 		lines.push(m.oversizedWarning(input.oversizedFiles), '');
+	}
+
+	if (input.droppedFiles.length > 0) {
+		lines.push(m.droppedWarning(input.droppedFiles), '');
 	}
 
 	lines.push(renderStatusLine(input, m), '');

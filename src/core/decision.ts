@@ -14,6 +14,9 @@ export const REQUEST_CHANGES_ON_VALUES = [
 ] as const;
 export type RequestChangesOn = (typeof REQUEST_CHANGES_ON_VALUES)[number];
 
+/** GitHub 上で生きている（dismiss されていない）自分の Review の判定。 */
+export type OwnVerdictState = 'APPROVED' | 'CHANGES_REQUESTED';
+
 export interface DecisionInput {
 	/** 今回のレビューで新たに投稿する指摘。 */
 	newFindings: readonly { severity: Severity }[];
@@ -27,6 +30,8 @@ export interface DecisionInput {
 	canSubmitVerdict: boolean;
 	/** approve input。既定 false。 */
 	approve: boolean;
+	/** GitHub 上で生きている自分の判定。COMMENTED は判定ではないので含めない。 */
+	currentVerdict: OwnVerdictState | null;
 }
 
 export function decideEvent(input: DecisionInput): EventDecision {
@@ -46,7 +51,10 @@ export function decideEvent(input: DecisionInput): EventDecision {
 		const hasUnresolved = unresolved.some(e =>
 			isAtLeastAsSevere(e.severity, threshold),
 		);
-		if (hasNew || hasUnresolved) return 'REQUEST_CHANGES';
+		// 既に CHANGES_REQUESTED が生きているなら再提出しても状態は変わらない。
+		// 毎回出すと push のたびにコメント 0 件の Review と通知が積み上がる。
+		const alreadyBlocking = input.currentVerdict === 'CHANGES_REQUESTED';
+		if (hasNew || (hasUnresolved && !alreadyBlocking)) return 'REQUEST_CHANGES';
 	}
 
 	return input.newFindings.length > 0 ? 'COMMENT' : 'NONE';

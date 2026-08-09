@@ -14,6 +14,7 @@ import type { AgentOutcome } from '../src/io/agent';
 import type {
 	CreateReviewInput,
 	GitHubClient,
+	OwnVerdict,
 	PullRequestInfo,
 } from '../src/io/github';
 import { type OrchestrateDeps, runReview } from '../src/orchestrate';
@@ -73,10 +74,12 @@ interface FakeOptions {
 	diffError?: Error;
 	/** findSticky を失敗させて「sticky を特定できない」経路を試す。 */
 	stickyLookupError?: Error;
-	/** dismissOwnApproval を失敗させて、abort() の個別 catch を試す。 */
+	/** dismissReview を失敗させて、abort() の個別 catch を試す。 */
 	dismissError?: Error;
 	/** listThreads を失敗させて、abort() の個別 catch を試す。 */
 	threadsError?: Error;
+	/** getOwnVerdict が返す値。未指定なら null（自分の判定が生きていない）。 */
+	ownVerdict?: OwnVerdict | null;
 }
 
 function setup(options: FakeOptions = {}) {
@@ -123,7 +126,8 @@ function setup(options: FakeOptions = {}) {
 		createReview: async input => {
 			reviews.push(input);
 		},
-		dismissOwnApproval: async message => {
+		getOwnVerdict: async () => options.ownVerdict ?? null,
+		dismissReview: async (_reviewId, message) => {
 			if (options.dismissError) throw options.dismissError;
 			dismissals.push(message);
 		},
@@ -239,6 +243,41 @@ describe('runReview', () => {
 		const result = await runReview(deps, CONFIG);
 		expect(reviews).toHaveLength(0);
 		expect(result.findingsCount).toBe(0);
+	});
+
+	test('差分に無いファイルの指摘を sticky で報告する', async () => {
+		const { deps, stickyWrites } = setup({
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ file: 'src/other.ts' })],
+					metrics: { costUsd: 0, durationMs: 0 },
+				},
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(stickyWrites[0]!.body).toContain('`src/other.ts`');
+	});
+
+	test('既に CHANGES_REQUESTED なら新規ゼロで Review を作らない', async () => {
+		const { deps, reviews } = setup({
+			ownVerdict: { id: 1, state: 'CHANGES_REQUESTED' },
+			threads: [
+				{
+					key: 'a'.repeat(12),
+					severity: 'critical',
+					title: '既存の指摘',
+					file: 'src/a.ts',
+					line: 2,
+					url: 'https://example.test/1',
+					isResolved: false,
+					isOutdated: false,
+				},
+			],
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(reviews).toHaveLength(0);
+		expect(result.event).toBe('NONE');
 	});
 
 	test('閾値以上の指摘があれば REQUEST_CHANGES で提出する', async () => {
@@ -431,7 +470,10 @@ describe('runReview', () => {
 			error: 'boom',
 			metrics: { costUsd: 0, durationMs: 0 },
 		};
-		const { deps, dismissals } = setup({ outcomes: [boom, boom, boom] });
+		const { deps, dismissals } = setup({
+			outcomes: [boom, boom, boom],
+			ownVerdict: { id: 1, state: 'APPROVED' },
+		});
 		await runReview(deps, CONFIG);
 		expect(dismissals).toHaveLength(1);
 	});
@@ -451,6 +493,7 @@ describe('runReview', () => {
 		const { deps, stickyWrites } = setup({
 			outcomes: [boom, boom, boom],
 			dismissError: new Error('403'),
+			ownVerdict: { id: 1, state: 'APPROVED' },
 		});
 		const result = await runReview(deps, CONFIG);
 		expect(result.status).toBe('failed');

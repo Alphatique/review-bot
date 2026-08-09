@@ -61,6 +61,7 @@ function input(overrides: Partial<StickyInput> = {}): StickyInput {
 		latest: null,
 		failure: null,
 		oversizedFiles: [],
+		droppedFiles: [],
 		...overrides,
 	};
 }
@@ -275,6 +276,16 @@ describe('renderSticky', () => {
 		const body = renderSticky(input({ oversizedFiles: ['src/big.ts'] }));
 		expect(body).toContain('レビューしていません');
 		expect(body).toContain('`src/big.ts`');
+	});
+
+	test('破棄した指摘のファイルを警告に出す', () => {
+		const body = renderSticky(input({ droppedFiles: ['src/other.ts'] }));
+		expect(body).toContain('破棄しました');
+		expect(body).toContain('`src/other.ts`');
+	});
+
+	test('破棄がゼロなら警告を出さない', () => {
+		expect(renderSticky(input())).not.toContain('破棄しました');
 	});
 
 	test('en でも同じ構造で描ける', () => {

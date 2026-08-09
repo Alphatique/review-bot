@@ -33,6 +33,8 @@ export interface Messages {
 
 	errorDetails: string;
 	oversizedWarning: (files: readonly string[]) => string;
+	/** 差分に無いファイルへの指摘を破棄したときの警告。 */
+	droppedWarning: (files: readonly string[]) => string;
 }
 
 const EN: Messages = {
@@ -65,6 +67,10 @@ const EN: Messages = {
 		`> ⚠️ ${files.length} file(s) were skipped because the diff exceeded the size limit and were **not reviewed**: ${files
 			.map(f => `\`${f}\``)
 			.join(', ')}`,
+	droppedWarning: files =>
+		`> ⚠️ ${files.length} finding(s) targeted file(s) outside the diff and were **discarded**: ${files
+			.map(f => `\`${f}\``)
+			.join(', ')}`,
 };
 
 const JA: Messages = {
@@ -95,6 +101,10 @@ const JA: Messages = {
 	errorDetails: 'エラー概要',
 	oversizedWarning: files =>
 		`> ⚠️ 差分がサイズ上限を超えたため ${files.length} 件のファイルを**レビューしていません**: ${files
+			.map(f => `\`${f}\``)
+			.join(', ')}`,
+	droppedWarning: files =>
+		`> ⚠️ 差分に含まれないファイルへの指摘 ${files.length} 件を**破棄しました**: ${files
 			.map(f => `\`${f}\``)
 			.join(', ')}`,
 };

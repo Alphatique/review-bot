@@ -4,7 +4,7 @@ import { SEVERITIES, type Severity } from './schema';
 /**
  * この Action が投稿した Review だと識別するマーカー。
  * GITHUB_TOKEN では自分の identity を確定できず Bot 判定にフォールバックする
- * ため、`dismissOwnApproval` が他 App の Review を「自分のもの」と誤認しない
+ * ため、`getOwnVerdict` が他 App の Review を「自分のもの」と誤認しない
  * よう、投稿者判定とこのマーカーの AND で絞り込む。
  */
 export const REVIEW_MARKER = '<!-- review-bot:v1 review -->';

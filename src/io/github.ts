@@ -33,6 +33,11 @@ export interface CreateReviewInput {
 	comments: readonly InlineCommentInput[];
 }
 
+export interface OwnVerdict {
+	id: number;
+	state: 'APPROVED' | 'CHANGES_REQUESTED';
+}
+
 export interface GitHubClient {
 	getPullRequest(): Promise<PullRequestInfo>;
 	getDiff(from: string, to: string): Promise<string>;
@@ -44,8 +49,9 @@ export interface GitHubClient {
 		body: string;
 	}): Promise<void>;
 	createReview(input: CreateReviewInput): Promise<void>;
-	/** 自分が過去に出した APPROVE を取り下げる。無ければ何もしない。 */
-	dismissOwnApproval(message: string): Promise<void>;
+	/** GitHub 上で生きている自分の判定。無ければ null。 */
+	getOwnVerdict(): Promise<OwnVerdict | null>;
+	dismissReview(reviewId: number, message: string): Promise<void>;
 }
 
 export interface GitHubClientOptions {
@@ -238,7 +244,7 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 				repo,
 				pull_number: prNumber,
 				commit_id: input.commitId,
-				// dismissOwnApproval が「自分の Review」を識別できるよう、
+				// getOwnVerdict が「自分の Review」を識別できるよう、
 				// 投稿者判定だけに頼らずマーカーも埋め込む。
 				body: `${input.body.trimEnd()}\n\n${REVIEW_MARKER}\n`,
 				event: input.event,
@@ -275,7 +281,7 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 			}
 		},
 
-		async dismissOwnApproval(message) {
+		async getOwnVerdict() {
 			const login = await resolveSelfLogin();
 			const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
 				owner,
@@ -288,31 +294,33 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 				const review = reviews[i]!;
 				// GITHUB_TOKEN では identity を確定できず Bot 判定に落ちるため、
 				// 投稿者判定だけでは他 App の Review と区別できない。マーカーとの
-				// AND で絞り、他 App の承認を誤って取り下げないようにする。
+				// AND で絞り、他 App の Review を誤って自分のものと扱わないように
+				// する。
 				if (!isOwnComment(review.user, login)) continue;
 				if (!hasReviewMarker(review.body ?? '')) continue;
-				// APPROVED / CHANGES_REQUESTED 以外は「最新の承認状態」を
-				// 左右しない。COMMENTED は GitHub 側で承認状態を上書きしない
-				// し、PENDING（書きかけの Review）もまだ提出されていないので
-				// 同様に無視できる。許可リストにして読み飛ばす。
+				// APPROVED / CHANGES_REQUESTED 以外は「最新の判定」を左右しない。
+				// COMMENTED は GitHub 側で判定を上書きしないし、PENDING（書きかけの
+				// Review）もまだ提出されていないので同様に無視できる。許可リスト
+				// にして読み飛ばす。
 				if (
 					review.state !== 'APPROVED' &&
 					review.state !== 'CHANGES_REQUESTED'
 				) {
 					continue;
 				}
-				// ここに来るのは APPROVED か CHANGES_REQUESTED。後者なら
-				// 取り下げる承認は無い。
-				if (review.state !== 'APPROVED') return;
-				await octokit.rest.pulls.dismissReview({
-					owner,
-					repo,
-					pull_number: prNumber,
-					review_id: review.id,
-					message,
-				});
-				return;
+				return { id: review.id, state: review.state };
 			}
+			return null;
+		},
+
+		async dismissReview(reviewId, message) {
+			await octokit.rest.pulls.dismissReview({
+				owner,
+				repo,
+				pull_number: prNumber,
+				review_id: reviewId,
+				message,
+			});
 		},
 	};
 }

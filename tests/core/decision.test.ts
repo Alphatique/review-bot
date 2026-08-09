@@ -9,6 +9,7 @@ function input(overrides: Partial<DecisionInput> = {}): DecisionInput {
 		threshold: 'critical',
 		canSubmitVerdict: true,
 		approve: false,
+		currentVerdict: null,
 		...overrides,
 	};
 }
@@ -113,6 +114,48 @@ describe('decideEvent', () => {
 	test('outdated かどうかは判定に影響しない', () => {
 		expect(
 			decideEvent(input({ existing: [existing('critical', false)] })),
+		).toBe('REQUEST_CHANGES');
+	});
+
+	test('未解決が閾値以上でも既に CHANGES_REQUESTED なら再提出しない', () => {
+		expect(
+			decideEvent(
+				input({
+					existing: [existing('critical', false)],
+					currentVerdict: 'CHANGES_REQUESTED',
+				}),
+			),
+		).toBe('NONE');
+	});
+
+	test('自分の判定が dismiss されていれば再提出する', () => {
+		expect(
+			decideEvent(
+				input({ existing: [existing('critical', false)], currentVerdict: null }),
+			),
+		).toBe('REQUEST_CHANGES');
+	});
+
+	test('既に CHANGES_REQUESTED でも新規指摘があれば提出する', () => {
+		expect(
+			decideEvent(
+				input({
+					newFindings: [severity('critical')],
+					existing: [existing('critical', false)],
+					currentVerdict: 'CHANGES_REQUESTED',
+				}),
+			),
+		).toBe('REQUEST_CHANGES');
+	});
+
+	test('自分の判定が APPROVED でも未解決があれば REQUEST_CHANGES', () => {
+		expect(
+			decideEvent(
+				input({
+					existing: [existing('critical', false)],
+					currentVerdict: 'APPROVED',
+				}),
+			),
 		).toBe('REQUEST_CHANGES');
 	});
 });

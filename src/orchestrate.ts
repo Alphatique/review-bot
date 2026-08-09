@@ -120,6 +120,8 @@ export async function runReview(
 		latest: LatestRun | null;
 		/** 失敗したときのエラー本文と、レビューできなかった commit。成功時は null。 */
 		failure: { message: string; sha: string } | null;
+		/** 差分に無いファイルを狙っていたため破棄した指摘のファイル名。 */
+		droppedFiles: readonly string[];
 	}): Promise<void> => {
 		// findSticky に失敗していると既存コメントの id が分からない。ここで
 		// 新規作成すると sticky が二重になるので、何もせず記録だけ残す。
@@ -171,9 +173,13 @@ export async function runReview(
 		const runs = record('FAILED', 0);
 
 		// 古い APPROVE が残ると PR が緑に見える。fail-on-error が防ごうとしている
-		// 状況そのものなので取り下げる。
+		// 状況そのものなので取り下げる。abort() は成功経路の getOwnVerdict() より
+		// 前に走ることがあるので、ここで独自に取り直す。
 		try {
-			await github.dismissOwnApproval(DISMISS_MESSAGE);
+			const verdict = await github.getOwnVerdict();
+			if (verdict?.state === 'APPROVED') {
+				await github.dismissReview(verdict.id, DISMISS_MESSAGE);
+			}
 		} catch (dismissError) {
 			log(`could not dismiss the stale approval: ${describe(dismissError)}`);
 		}
@@ -195,6 +201,8 @@ export async function runReview(
 			// latestRun() を呼ぶと「コスト $0.00 で実行した」ように読めてしまう。
 			latest: attempts > 0 ? latestRun() : null,
 			failure: { message: error, sha: pr.headSha },
+			// abort() では指摘の組み立てまで到達しないので破棄は発生しない。
+			droppedFiles: [],
 		});
 
 		return {
@@ -236,6 +244,8 @@ export async function runReview(
 				board: buildBoard(await github.listThreads()),
 				latest: null,
 				failure: null,
+				// エージェントを起動していないので破棄も発生しない。
+				droppedFiles: [],
 			});
 			return {
 				status: 'success',
@@ -283,15 +293,21 @@ export async function runReview(
 		if (!outcome.ok) return await abort(outcome.error);
 
 		const existing = await github.listThreads();
+		// decideEvent が「既に自分の CHANGES_REQUESTED が生きているか」を
+		// 判断できるよう、ここで一度だけ取っておく。
+		const ownVerdict = await github.getOwnVerdict();
 		const { toPost } = dedupe(outcome.findings, existing);
 
 		const comments: InlineCommentInput[] = [];
 		const posted: KeyedFinding[] = [];
+		const droppedFiles = new Set<string>();
 		for (const finding of toPost) {
 			// 差分に無いファイルは投稿先が無い。プロンプトで禁止している（Task 10）が、
-			// それでも出てきた場合は破棄してログに残す。
+			// それでも出てきた場合は破棄してログに残す。PR 上にも痕跡を残さないと
+			// モデルが何を言おうとしたのか誰にも分からないので、sticky にも出す。
 			if (!analysis.commentableLines.has(finding.file)) {
 				log(`dropped a finding outside the diff: ${finding.file}`);
+				droppedFiles.add(finding.file);
 				continue;
 			}
 			// 行が差分内に無ければファイル単位コメントに落とす。スレッドは立つので
@@ -313,6 +329,7 @@ export async function runReview(
 			threshold: config.requestChangesOn,
 			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
 			approve: config.approve,
+			currentVerdict: ownVerdict?.state ?? null,
 		});
 
 		if (event !== 'NONE') {
@@ -337,6 +354,7 @@ export async function runReview(
 			board: buildBoard(threads),
 			latest: latestRun(),
 			failure: null,
+			droppedFiles: [...droppedFiles],
 		});
 
 		const counts = emptyCounts();
