@@ -73,6 +73,10 @@ interface FakeOptions {
 	diffError?: Error;
 	/** findSticky を失敗させて「sticky を特定できない」経路を試す。 */
 	stickyLookupError?: Error;
+	/** dismissOwnApproval を失敗させて、abort() の個別 catch を試す。 */
+	dismissError?: Error;
+	/** listThreads を失敗させて、abort() の個別 catch を試す。 */
+	threadsError?: Error;
 }
 
 function setup(options: FakeOptions = {}) {
@@ -100,6 +104,9 @@ function setup(options: FakeOptions = {}) {
 		},
 		listThreads: async () => {
 			threadCalls += 1;
+			// 成功経路でも listThreads は呼ばれるので、threadsError が
+			// 指定されたときだけ投げる。
+			if (options.threadsError) throw options.threadsError;
 			if (threadCalls > 1 && options.threadsAfterReview) {
 				return options.threadsAfterReview;
 			}
@@ -117,6 +124,7 @@ function setup(options: FakeOptions = {}) {
 			reviews.push(input);
 		},
 		dismissOwnApproval: async message => {
+			if (options.dismissError) throw options.dismissError;
 			dismissals.push(message);
 		},
 	};
@@ -366,6 +374,128 @@ describe('runReview', () => {
 		expect(reviews).toHaveLength(0);
 		expect(stickyWrites).toHaveLength(1);
 		expect(stickyWrites[0]!.body).toContain('boom');
+		// エラー文言だけでなく、固定の失敗バナー文言も出ていることを確認する。
+		expect(stickyWrites[0]!.body).toContain(
+			'自動レビューを完了できませんでした',
+		);
+	});
+
+	test('失敗時に reviewed を進めない', async () => {
+		const boom = {
+			ok: false as const,
+			error: 'boom',
+			metrics: { costUsd: 0, durationMs: 0 },
+		};
+		const { deps, stickyWrites } = setup({
+			lastReviewed: 'prev',
+			outcomes: [boom, boom, boom],
+		});
+		await runReview(deps, CONFIG);
+		expect(stickyWrites[0]!.body).toContain(
+			'<!-- review-bot:v1 sticky reviewed=prev -->',
+		);
+	});
+
+	test('sticky が無い状態で失敗したら base に据え置く', async () => {
+		const boom = {
+			ok: false as const,
+			error: 'boom',
+			metrics: { costUsd: 0, durationMs: 0 },
+		};
+		const { deps, stickyWrites } = setup({ outcomes: [boom, boom, boom] });
+		await runReview(deps, CONFIG);
+		expect(stickyWrites[0]!.body).toContain(
+			'<!-- review-bot:v1 sticky reviewed=base -->',
+		);
+	});
+
+	test('失敗時に FAILED の run マーカーを追記しコストを乗せる', async () => {
+		const boom = {
+			ok: false as const,
+			error: 'boom',
+			metrics: { costUsd: 0.04, durationMs: 1000 },
+		};
+		const { deps, stickyWrites } = setup({ outcomes: [boom, boom, boom] });
+		const result = await runReview(deps, CONFIG);
+		const runs = parseRunMarkers(stickyWrites[0]!.body);
+		expect(runs).toHaveLength(1);
+		expect(runs[0]!.event).toBe('FAILED');
+		expect(runs[0]!.attempts).toBe(3);
+		expect(result.costUsd).toBeCloseTo(0.12, 4);
+		expect(result.totalCostUsd).toBeCloseTo(0.12, 4);
+	});
+
+	test('失敗時に自分の APPROVE を取り下げる', async () => {
+		const boom = {
+			ok: false as const,
+			error: 'boom',
+			metrics: { costUsd: 0, durationMs: 0 },
+		};
+		const { deps, dismissals } = setup({ outcomes: [boom, boom, boom] });
+		await runReview(deps, CONFIG);
+		expect(dismissals).toHaveLength(1);
+	});
+
+	test('成功時は APPROVE を取り下げない', async () => {
+		const { deps, dismissals } = setup();
+		await runReview(deps, CONFIG);
+		expect(dismissals).toHaveLength(0);
+	});
+
+	test('APPROVE の取り下げが失敗してもバナーは書かれる', async () => {
+		const boom = {
+			ok: false as const,
+			error: 'boom',
+			metrics: { costUsd: 0, durationMs: 0 },
+		};
+		const { deps, stickyWrites } = setup({
+			outcomes: [boom, boom, boom],
+			dismissError: new Error('403'),
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(result.status).toBe('failed');
+		expect(stickyWrites).toHaveLength(1);
+		expect(stickyWrites[0]!.body).toContain('boom');
+	});
+
+	test('スレッド取得が失敗してもバナーは書かれる', async () => {
+		const boom = {
+			ok: false as const,
+			error: 'boom',
+			metrics: { costUsd: 0, durationMs: 0 },
+		};
+		const { deps, stickyWrites } = setup({
+			outcomes: [boom, boom, boom],
+			threadsError: new Error('502'),
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(result.status).toBe('failed');
+		expect(stickyWrites[0]!.body).toContain('boom');
+	});
+
+	test('エージェントが走る前に失敗したら実行情報を出さない', async () => {
+		// attempts が 0 のまま実行情報を出すと「エージェントが走ってコストゼロ
+		// だった」ように読める。
+		const { deps, stickyWrites } = setup({
+			diffError: new Error('502 from GitHub'),
+		});
+		await runReview(deps, CONFIG);
+		expect(stickyWrites[0]!.body).not.toContain('実行情報');
+	});
+
+	test('Review の body は空にしない', async () => {
+		// event: COMMENT の Review に空 body を渡すと GitHub が 422 を返す。
+		const { deps, reviews } = setup({
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ line: 2 })],
+					metrics: { costUsd: 0, durationMs: 0 },
+				},
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(reviews[0]!.body.trim().length).toBeGreaterThan(0);
 	});
 
 	test('差分が空ならレビューを投稿せず成功で終わる', async () => {
@@ -377,10 +507,13 @@ describe('runReview', () => {
 	});
 
 	test('fork PR は失敗として扱う', async () => {
-		const { deps, reviews } = setup({ pr: { isFork: true } });
+		// fork では GITHUB_TOKEN が read-only になるので sticky も書けない。
+		// 書こうとして 403 で落ちるより、最初から何も呼ばない方が安全。
+		const { deps, reviews, stickyWrites } = setup({ pr: { isFork: true } });
 		const result = await runReview(deps, CONFIG);
 		expect(result.status).toBe('failed');
 		expect(reviews).toHaveLength(0);
+		expect(stickyWrites).toHaveLength(0);
 	});
 
 	test('instructions-file があればそれを使う', async () => {
