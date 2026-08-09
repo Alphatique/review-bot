@@ -2119,23 +2119,23 @@ git commit -m "feat(github): sticky コメントとスレッド詳細の取得�
 ```ts
 describe('approve', () => {
 	test('既定は false', () => {
-		const parsed = loadConfig(base());
-		expect(parsed.ok && parsed.value.approve).toBe(false);
+		const result = loadConfig(VALID);
+		expect(result.ok && result.value.approve).toBe(false);
 	});
 
 	test('true を指定すると有効になる', () => {
-		const parsed = loadConfig({ ...base(), approve: 'true' });
-		expect(parsed.ok && parsed.value.approve).toBe(true);
+		const result = loadConfig({ ...VALID, approve: 'true' });
+		expect(result.ok && result.value.approve).toBe(true);
 	});
 
 	test('不正な値は false として扱う', () => {
-		const parsed = loadConfig({ ...base(), approve: 'maybe' });
-		expect(parsed.ok && parsed.value.approve).toBe(false);
+		const result = loadConfig({ ...VALID, approve: 'maybe' });
+		expect(result.ok && result.value.approve).toBe(false);
 	});
 });
 ```
 
-`base()` は `tests/config.test.ts` に既にある最小入力ヘルパを使う。無ければ既存テストが使っている入力リテラルに合わせる。
+`VALID` は `tests/config.test.ts` の先頭に既にある入力リテラル。新しくヘルパを作らず、既存テストと同じ書き方に合わせること。
 
 - [ ] **Step 2: テストが落ちることを確認**
 
