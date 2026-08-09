@@ -3365,6 +3365,265 @@ git commit -m "docs: sticky サマリーと approve の挙動を README に反�
 
 ---
 
+## Task 12: 判定の再表明をやめ、破棄した指摘を可視化する
+
+Task 11 のレビューが、README の記述ではなく**挙動**の問題を掘り当てたことによる追加タスク。独立した 2 件だが、どちらも `orchestrate.ts` の同じ関数を触るため 1 タスクにまとめる。
+
+**Files:**
+- Modify: `src/core/decision.ts`
+- Modify: `src/io/github.ts`
+- Modify: `src/core/i18n.ts`
+- Modify: `src/core/render.ts`
+- Modify: `src/orchestrate.ts`
+- Test: `tests/core/decision.test.ts`, `tests/core/render.test.ts`, `tests/orchestrate.test.ts`
+
+### A. 未解決だけを理由にした REQUEST_CHANGES をやめる
+
+いまの `decideEvent` は、閾値以上の未解決指摘が残っている限り、**新規指摘がゼロでも毎回** `REQUEST_CHANGES` を返す。毎回 Review を作っていた頃はこれが「状態の再表明」として必要だったが、いまは違う。GitHub は前回の `CHANGES_REQUESTED` を生かし続けるので、同じ判定を再投稿しても状態は 1 ミリも変わらず、コメント 0 件の Review と通知だけが積み上がる。これはこの機能が消そうとしているノイズそのものである。
+
+ただし人が自分の Review を dismiss した場合は再表明が要る。そこで「GitHub 上で生きている自分の判定」を判断材料に加える。
+
+- [ ] **Step 1: `decision.ts` のテストを書く**
+
+```ts
+test('未解決が閾値以上でも既に CHANGES_REQUESTED なら再提出しない', () => {
+	expect(
+		decideEvent(
+			input({
+				existing: [existing('critical', false)],
+				currentVerdict: 'CHANGES_REQUESTED',
+			}),
+		),
+	).toBe('NONE');
+});
+
+test('自分の判定が dismiss されていれば再提出する', () => {
+	expect(
+		decideEvent(
+			input({ existing: [existing('critical', false)], currentVerdict: null }),
+		),
+	).toBe('REQUEST_CHANGES');
+});
+
+test('既に CHANGES_REQUESTED でも新規指摘があれば提出する', () => {
+	expect(
+		decideEvent(
+			input({
+				newFindings: [severity('critical')],
+				existing: [existing('critical', false)],
+				currentVerdict: 'CHANGES_REQUESTED',
+			}),
+		),
+	).toBe('REQUEST_CHANGES');
+});
+
+test('自分の判定が APPROVED でも未解決があれば REQUEST_CHANGES', () => {
+	expect(
+		decideEvent(
+			input({
+				existing: [existing('critical', false)],
+				currentVerdict: 'APPROVED',
+			}),
+		),
+	).toBe('REQUEST_CHANGES');
+});
+```
+
+`input()` ヘルパの既定に `currentVerdict: null` を足すこと。既存テストはすべてこの既定で従来どおりの結果になる。
+
+- [ ] **Step 2: `decision.ts` を変更する**
+
+```ts
+export type OwnVerdictState = 'APPROVED' | 'CHANGES_REQUESTED';
+```
+
+`DecisionInput` に追加：
+
+```ts
+	/** GitHub 上で生きている自分の判定。COMMENTED は判定ではないので含めない。 */
+	currentVerdict: OwnVerdictState | null;
+```
+
+`decideEvent` の REQUEST_CHANGES ブロックを差し替える：
+
+```ts
+	if (input.threshold !== 'none' && input.canSubmitVerdict) {
+		const threshold: Severity = input.threshold;
+		const hasNew = input.newFindings.some(f =>
+			isAtLeastAsSevere(f.severity, threshold),
+		);
+		const hasUnresolved = unresolved.some(e =>
+			isAtLeastAsSevere(e.severity, threshold),
+		);
+		// 既に CHANGES_REQUESTED が生きているなら再提出しても状態は変わらない。
+		// 毎回出すと push のたびにコメント 0 件の Review と通知が積み上がる。
+		const alreadyBlocking = input.currentVerdict === 'CHANGES_REQUESTED';
+		if (hasNew || (hasUnresolved && !alreadyBlocking)) return 'REQUEST_CHANGES';
+	}
+```
+
+- [ ] **Step 3: `github.ts` の `dismissOwnApproval` を 2 つに割る**
+
+判定の取得と取り下げを分ける。取得結果は `decideEvent` にも使うので、走査を 2 回やらずに済む。
+
+```ts
+export interface OwnVerdict {
+	id: number;
+	state: 'APPROVED' | 'CHANGES_REQUESTED';
+}
+```
+
+`GitHubClient` から `dismissOwnApproval` を消し、代わりに：
+
+```ts
+	/** GitHub 上で生きている自分の判定。無ければ null。 */
+	getOwnVerdict(): Promise<OwnVerdict | null>;
+	dismissReview(reviewId: number, message: string): Promise<void>;
+```
+
+`getOwnVerdict` の走査条件は現行の `dismissOwnApproval` と同じ（識別子と `REVIEW_MARKER` の AND、`COMMENTED` / `DISMISSED` / `PENDING` を読み飛ばす許可リスト）。見つけた時点で `{ id: review.id, state: review.state }` を返す。
+
+- [ ] **Step 4: `orchestrate.ts` を変更する**
+
+成功経路、`existing` を取った直後：
+
+```ts
+	const ownVerdict = await github.getOwnVerdict();
+```
+
+`decideEvent` の呼び出しに `currentVerdict: ownVerdict?.state ?? null` を足す。
+
+`abort()` の取り下げ処理を差し替える：
+
+```ts
+		try {
+			const verdict = await github.getOwnVerdict();
+			if (verdict?.state === 'APPROVED') {
+				await github.dismissReview(verdict.id, DISMISS_MESSAGE);
+			}
+		} catch (dismissError) {
+			log(`could not dismiss the stale approval: ${describe(dismissError)}`);
+		}
+```
+
+`abort()` は成功経路より前に走ることがあるので、ここでは独自に取り直す。
+
+### B. 破棄した指摘を sticky に出す
+
+差分に含まれないファイルへの指摘は破棄されるが、いまは Actions のログにしか残らない。PR 上に痕跡がゼロなので、モデルが何を言おうとしたのか誰にも分からない。件数とファイル名をバナー領域に出す。
+
+- [ ] **Step 5: `i18n.ts` に文言を足す**
+
+```ts
+	droppedWarning: (files: readonly string[]) => string;
+```
+
+```ts
+	// EN
+	droppedWarning: files =>
+		`> ⚠️ ${files.length} finding(s) targeted file(s) outside the diff and were **discarded**: ${files
+			.map(f => `\`${f}\``)
+			.join(', ')}`,
+	// JA
+	droppedWarning: files =>
+		`> ⚠️ 差分に含まれないファイルへの指摘 ${files.length} 件を**破棄しました**: ${files
+			.map(f => `\`${f}\``)
+			.join(', ')}`,
+```
+
+- [ ] **Step 6: `render.ts` に出力を足す**
+
+`StickyInput` に `droppedFiles: readonly string[]` を追加し、`oversizedFiles` の警告の直後に同じ形で出す。空なら何も出さない。
+
+- [ ] **Step 7: `orchestrate.ts` で破棄したファイルを集める**
+
+コメント組み立てループで、破棄した `finding.file` を集める。同じファイルに複数の指摘が来ても 1 回だけ出す。
+
+```ts
+	const droppedFiles = new Set<string>();
+```
+
+```ts
+		if (!analysis.commentableLines.has(finding.file)) {
+			log(`dropped a finding outside the diff: ${finding.file}`);
+			droppedFiles.add(finding.file);
+			continue;
+		}
+```
+
+`writeSticky` の呼び出しに `droppedFiles: [...droppedFiles]` を渡す。**成功経路のみ**。`abort()` と差分ゼロ経路は空配列でよい（そこには破棄が発生しない）。
+
+- [ ] **Step 8: テストを足す**
+
+`tests/core/render.test.ts`：
+
+```ts
+test('破棄した指摘のファイルを警告に出す', () => {
+	const body = renderSticky(input({ droppedFiles: ['src/other.ts'] }));
+	expect(body).toContain('破棄しました');
+	expect(body).toContain('`src/other.ts`');
+});
+
+test('破棄がゼロなら警告を出さない', () => {
+	expect(renderSticky(input())).not.toContain('破棄しました');
+});
+```
+
+`tests/orchestrate.test.ts`：
+
+```ts
+test('差分に無いファイルの指摘を sticky で報告する', async () => {
+	const { deps, stickyWrites } = setup({
+		outcomes: [
+			{
+				ok: true,
+				findings: [finding({ file: 'src/other.ts' })],
+				metrics: { costUsd: 0, durationMs: 0 },
+			},
+		],
+	});
+	await runReview(deps, CONFIG);
+	expect(stickyWrites[0]!.body).toContain('`src/other.ts`');
+});
+
+test('既に CHANGES_REQUESTED なら新規ゼロで Review を作らない', async () => {
+	const { deps, reviews } = setup({
+		ownVerdict: { id: 1, state: 'CHANGES_REQUESTED' },
+		threads: [
+			{
+				key: 'a'.repeat(12),
+				severity: 'critical',
+				title: '既存の指摘',
+				file: 'src/a.ts',
+				line: 2,
+				url: 'https://example.test/1',
+				isResolved: false,
+				isOutdated: false,
+			},
+		],
+	});
+	const result = await runReview(deps, CONFIG);
+	expect(reviews).toHaveLength(0);
+	expect(result.event).toBe('NONE');
+});
+```
+
+`FakeOptions` に `ownVerdict?: OwnVerdict | null` を足し、`getOwnVerdict` / `dismissReview` をフェイクに実装すること。既存の `dismissals` は `dismissReview` の呼び出し記録に読み替える。
+
+- [ ] **Step 9: 型・lint・全テスト**
+
+Run: `bun run typecheck && bun run lint && bun test`
+Expected: 全て PASS、スキップゼロ
+
+- [ ] **Step 10: コミット**
+
+```bash
+git add src tests
+git commit -m "fix(decision): 判定の再表明をやめ、破棄した指摘を sticky に出す"
+```
+
+---
+
 ## Self-Review 結果
 
 **1. Spec coverage**
