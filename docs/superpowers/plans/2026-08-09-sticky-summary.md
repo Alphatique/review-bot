@@ -3168,18 +3168,21 @@ test('エージェントが走る前に失敗したら実行情報を出さな�
 	expect(stickyWrites[0]!.body).not.toContain('実行情報');
 });
 
-test('Review の body は空にしない', async () => {
+test('COMMENT の Review でも body を空にしない', async () => {
 	// event: COMMENT の Review に空 body を渡すと GitHub が 422 を返す。
+	// 既定の CONFIG は requestChangesOn: 'major' なので、閾値未満の指摘と
+	// 高い閾値を組み合わせないと COMMENT の分岐に入らない。
 	const { deps, reviews } = setup({
 		outcomes: [
 			{
 				ok: true,
-				findings: [finding({ line: 2 })],
+				findings: [finding({ severity: 'minor', line: 2 })],
 				metrics: { costUsd: 0, durationMs: 0 },
 			},
 		],
 	});
-	await runReview(deps, CONFIG);
+	await runReview(deps, { ...CONFIG, requestChangesOn: 'critical' });
+	expect(reviews[0]!.event).toBe('COMMENT');
 	expect(reviews[0]!.body.trim().length).toBeGreaterThan(0);
 });
 ```
