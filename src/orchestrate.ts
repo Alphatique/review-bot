@@ -367,11 +367,17 @@ export async function runReview(
 			});
 		}
 
-		// 投稿後に取り直す。サマリーを常に GitHub の現状から組み立てるため。
-		// event が NONE なら createReview を呼んでいないので新しいスレッドは無く、
-		// existing がそのまま最新。ここで余計に叩くと、指摘ゼロの成功した実行が
-		// API の一時失敗だけで失敗扱いになる。
-		const threads = event === 'NONE' ? existing : await github.listThreads();
+		// 新しいコメントを投稿したときだけ取り直す。投稿していなければ existing が
+		// そのまま最新で、ここで叩くと API の一時失敗が「投稿済みのレビュー」を
+		// 失敗扱いに変えてしまう（エージェントの課金は済んでいる）。
+		let threads = existing;
+		if (comments.length > 0) {
+			try {
+				threads = await github.listThreads();
+			} catch (error) {
+				log(`could not refresh review threads: ${describe(error)}`);
+			}
+		}
 		const runs = record(event, posted.length);
 
 		await writeSticky({

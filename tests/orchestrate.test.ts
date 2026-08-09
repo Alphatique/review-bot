@@ -78,6 +78,11 @@ interface FakeOptions {
 	dismissError?: Error;
 	/** listThreads を失敗させて、abort() の個別 catch を試す。 */
 	threadsError?: Error;
+	/**
+	 * listThreads が何回目の呼び出しから失敗するか。投稿後の再取得（2 回目）
+	 * だけを失敗させ、1 回目（existing の取得）は成功させたいケースで使う。
+	 */
+	threadsErrorAfter?: number;
 	/** getOwnVerdict が返す値。未指定なら null（自分の判定が生きていない）。 */
 	ownVerdict?: OwnVerdict | null;
 	/** getOwnVerdict を失敗させて、abort() 側の個別 catch を試す。 */
@@ -112,6 +117,12 @@ function setup(options: FakeOptions = {}) {
 			// 成功経路でも listThreads は呼ばれるので、threadsError が
 			// 指定されたときだけ投げる。
 			if (options.threadsError) throw options.threadsError;
+			if (
+				options.threadsErrorAfter !== undefined &&
+				threadCalls > options.threadsErrorAfter
+			) {
+				throw new Error('threads refresh failed');
+			}
 			if (threadCalls > 1 && options.threadsAfterReview) {
 				return options.threadsAfterReview;
 			}
@@ -815,5 +826,25 @@ describe('runReview', () => {
 		});
 		await runReview(deps, CONFIG);
 		expect(stickyWrites[0]!.body).toContain('再取得で見えた指摘');
+	});
+
+	test('投稿後のスレッド再取得が失敗しても成功扱いのまま sticky を書く', async () => {
+		// レビューは既に投稿済み（＝エージェントの課金も済んでいる）。ここで
+		// API が一時的に失敗しても、投稿済みのレビューを失敗扱いに変えては
+		// いけない。existing をそのまま使って sticky を書き切る。
+		const { deps, reviews, stickyWrites } = setup({
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ line: 2 })],
+					metrics: { costUsd: 0.1, durationMs: 1000 },
+				},
+			],
+			threadsErrorAfter: 1,
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(reviews).toHaveLength(1);
+		expect(result.status).toBe('success');
+		expect(stickyWrites).toHaveLength(1);
 	});
 });
