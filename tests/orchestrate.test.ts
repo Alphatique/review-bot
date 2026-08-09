@@ -483,18 +483,21 @@ describe('runReview', () => {
 		expect(stickyWrites[0]!.body).not.toContain('実行情報');
 	});
 
-	test('Review の body は空にしない', async () => {
+	test('COMMENT の Review でも body を空にしない', async () => {
 		// event: COMMENT の Review に空 body を渡すと GitHub が 422 を返す。
+		// major/major だと REQUEST_CHANGES に倒れて COMMENT 経路を通らないので、
+		// minor の指摘と閾値 critical を組み合わせて確実に COMMENT にする。
 		const { deps, reviews } = setup({
 			outcomes: [
 				{
 					ok: true,
-					findings: [finding({ line: 2 })],
+					findings: [finding({ severity: 'minor', line: 2 })],
 					metrics: { costUsd: 0, durationMs: 0 },
 				},
 			],
 		});
-		await runReview(deps, CONFIG);
+		await runReview(deps, { ...CONFIG, requestChangesOn: 'critical' });
+		expect(reviews[0]!.event).toBe('COMMENT');
 		expect(reviews[0]!.body.trim().length).toBeGreaterThan(0);
 	});
 
