@@ -38,6 +38,10 @@ inputs:
     description: 'Submit the review as REQUEST_CHANGES when a finding at or above this severity exists (none, critical, major, minor).'
     required: false
     default: 'critical'
+  approve:
+    description: 'Submit the review as APPROVE when the pull request has no outstanding findings. Off by default; a bot approval must not be relied on as a branch-protection gate.'
+    required: false
+    default: 'false'
   fail-on-error:
     description: 'Fail the action when the review itself could not be completed.'
     required: false
@@ -76,7 +80,7 @@ outputs:
     description: 'success or failed'
     value: ${{ steps.review.outputs.status }}
   review-event:
-    description: 'COMMENT, REQUEST_CHANGES, or NONE'
+    description: 'COMMENT, REQUEST_CHANGES, APPROVE, or NONE'
     value: ${{ steps.review.outputs['review-event'] }}
   findings-count:
     description: 'Number of new findings posted'
@@ -93,6 +97,12 @@ outputs:
   incomplete-files:
     description: 'Number of files skipped because the diff exceeded the size limit'
     value: ${{ steps.review.outputs['incomplete-files'] }}
+  cost-usd:
+    description: 'Cost of this run in USD, summed across retries'
+    value: ${{ steps.review.outputs['cost-usd'] }}
+  total-cost-usd:
+    description: 'Cumulative cost of every review run on this pull request in USD'
+    value: ${{ steps.review.outputs['total-cost-usd'] }}
 
 runs:
   using: composite
@@ -117,6 +127,7 @@ runs:
         INPUT_EXCLUDE: ${{ inputs.exclude }}
         INPUT_LANGUAGE: ${{ inputs.language }}
         INPUT_REQUEST-CHANGES-ON: ${{ inputs.request-changes-on }}
+        INPUT_APPROVE: ${{ inputs.approve }}
         INPUT_FAIL-ON-ERROR: ${{ inputs.fail-on-error }}
         INPUT_FAIL-ON-INCOMPLETE: ${{ inputs.fail-on-incomplete }}
         INPUT_MODEL: ${{ inputs.model }}

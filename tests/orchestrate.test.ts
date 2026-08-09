@@ -38,6 +38,7 @@ const CONFIG: Config = {
 	requestChangesOn: 'major',
 	failOnError: true,
 	failOnIncomplete: false,
+	approve: false,
 	model: 'claude-sonnet-5',
 	effort: 'high',
 	maxRetries: 3,

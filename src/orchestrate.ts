@@ -35,6 +35,10 @@ export interface RunResult {
 	counts: Record<Severity, number>;
 	findingsCount: number;
 	incompleteFiles: number;
+	/** この実行のコスト（全 attempt 合計）。 */
+	costUsd: number;
+	/** PR 全体の累計コスト。 */
+	totalCostUsd: number;
 	error: string | null;
 }
 
@@ -58,6 +62,8 @@ export async function runReview(
 		counts: emptyCounts(),
 		findingsCount: 0,
 		incompleteFiles: 0,
+		costUsd: 0,
+		totalCostUsd: 0,
 		error,
 	});
 
@@ -117,6 +123,8 @@ export async function runReview(
 				counts: emptyCounts(),
 				findingsCount: 0,
 				incompleteFiles: analysis.oversizedFiles.length,
+				costUsd: 0,
+				totalCostUsd: 0,
 				error: null,
 			};
 		}
@@ -208,6 +216,8 @@ export async function runReview(
 			counts,
 			findingsCount: toPost.length,
 			incompleteFiles: analysis.oversizedFiles.length,
+			costUsd: 0,
+			totalCostUsd: 0,
 			error: null,
 		};
 	} catch (error) {

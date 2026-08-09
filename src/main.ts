@@ -18,6 +18,7 @@ const INPUT_KEYS = [
 	'exclude',
 	'language',
 	'request-changes-on',
+	'approve',
 	'fail-on-error',
 	'fail-on-incomplete',
 	'model',
@@ -96,6 +97,8 @@ async function main(): Promise<void> {
 	core.setOutput('major-count', String(result.counts.major));
 	core.setOutput('minor-count', String(result.counts.minor));
 	core.setOutput('incomplete-files', String(result.incompleteFiles));
+	core.setOutput('cost-usd', result.costUsd.toFixed(4));
+	core.setOutput('total-cost-usd', result.totalCostUsd.toFixed(4));
 
 	if (result.status === 'failed' && config.failOnError) {
 		core.setFailed(result.error ?? 'review failed');

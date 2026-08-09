@@ -24,6 +24,7 @@ export interface Config {
 	requestChangesOn: RequestChangesOn;
 	failOnError: boolean;
 	failOnIncomplete: boolean;
+	approve: boolean;
 	model: string;
 	effort: Effort;
 	maxRetries: number;
@@ -100,6 +101,7 @@ export function loadConfig(input: RawInputs): ParseResult<Config> {
 			requestChangesOn,
 			failOnError: bool(input, 'fail-on-error', true),
 			failOnIncomplete: bool(input, 'fail-on-incomplete', false),
+			approve: bool(input, 'approve', false),
 			model: str(input, 'model') || 'claude-sonnet-5',
 			effort,
 			maxRetries,
