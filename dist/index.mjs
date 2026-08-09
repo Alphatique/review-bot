@@ -23769,7 +23769,7 @@ const REQUEST_CHANGES_ON_VALUES = [
 function decideEvent(input) {
 	const unresolved = input.existing.filter((e) => !e.isResolved);
 	const outstandingAfter = unresolved.length + input.newFindings.length;
-	if (input.approve && input.canSubmitVerdict && outstandingAfter === 0) return "APPROVE";
+	if (input.approve && input.canSubmitVerdict && outstandingAfter === 0 && input.currentVerdict !== "APPROVED") return "APPROVE";
 	if (input.threshold !== "none" && input.canSubmitVerdict) {
 		const threshold = input.threshold;
 		const hasNew = input.newFindings.some((f) => isAtLeastAsSevere(f.severity, threshold));
@@ -26794,7 +26794,7 @@ async function runReview(deps, config) {
 		const existing = await github.listThreads();
 		const canSubmitVerdict = !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX);
 		let currentVerdict = null;
-		if (config.requestChangesOn !== "none" && canSubmitVerdict) try {
+		if (canSubmitVerdict && (config.requestChangesOn !== "none" || config.approve)) try {
 			currentVerdict = (await github.getOwnVerdict())?.state ?? null;
 		} catch (error) {
 			log(`could not read the current verdict: ${describe(error)}`);

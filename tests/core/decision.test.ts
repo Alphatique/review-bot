@@ -170,4 +170,16 @@ describe('decideEvent', () => {
 			),
 		).toBe('COMMENT');
 	});
+
+	test('既に APPROVED なら未解決ゼロでも再承認しない', () => {
+		expect(
+			decideEvent(input({ approve: true, currentVerdict: 'APPROVED' })),
+		).toBe('NONE');
+	});
+
+	test('承認が dismiss されていれば再承認する', () => {
+		expect(decideEvent(input({ approve: true, currentVerdict: null }))).toBe(
+			'APPROVE',
+		);
+	});
 });

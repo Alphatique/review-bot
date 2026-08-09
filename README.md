@@ -6,7 +6,7 @@ Review pull requests with Claude. Findings are posted as inline review comments,
 - One summary comment per pull request, edited in place. It indexes every outstanding finding, records the review history, and shows the cumulative cost.
 - The state lives on GitHub: the findings are the review threads themselves, and the incremental starting point and the run history are markers inside the summary comment. There is no database.
 - Reviews are incremental by default: after the first run only the changes since the last review are sent to the model.
-- A review is only submitted when there is something to submit: new findings, or — when a human dismisses this action's `CHANGES_REQUESTED` while findings are still outstanding — a verdict that needs to be resubmitted. A push that triggers neither just refreshes the summary comment.
+- A review is only submitted when there is something to submit: new findings, or a verdict that is not already in force. A push that produces neither just refreshes the summary comment.
 
 ## Quick start
 

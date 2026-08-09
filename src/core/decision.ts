@@ -39,7 +39,14 @@ export function decideEvent(input: DecisionInput): EventDecision {
 	// 投稿後の未解決件数。board を組み立てる前に判定するため、ここで直接数える。
 	const outstandingAfter = unresolved.length + input.newFindings.length;
 
-	if (input.approve && input.canSubmitVerdict && outstandingAfter === 0) {
+	// 既に自分の APPROVED が生きているなら出し直しても状態は変わらない。
+	// REQUEST_CHANGES 側と同じ理由でノイズにしかならない。
+	if (
+		input.approve &&
+		input.canSubmitVerdict &&
+		outstandingAfter === 0 &&
+		input.currentVerdict !== 'APPROVED'
+	) {
 		return 'APPROVE';
 	}
 

@@ -738,6 +738,30 @@ describe('runReview', () => {
 		expect(reviews[0]!.event).toBe('APPROVE');
 	});
 
+	test('既に APPROVED なら未解決ゼロでも再承認しない', async () => {
+		const { deps, reviews } = setup({
+			ownVerdict: { id: 1, state: 'APPROVED' },
+		});
+		const result = await runReview(deps, { ...CONFIG, approve: true });
+		expect(reviews).toHaveLength(0);
+		expect(result.event).toBe('NONE');
+	});
+
+	test('request-changes-on が none でも approve 側は判定を取得して再承認を防ぐ', async () => {
+		// threshold だけを見て判定取得をスキップすると、この組み合わせ
+		// （ブロックはしないが承認はする設定）で APPROVE が毎回出てしまう。
+		const { deps, reviews } = setup({
+			ownVerdict: { id: 1, state: 'APPROVED' },
+		});
+		const result = await runReview(deps, {
+			...CONFIG,
+			requestChangesOn: 'none',
+			approve: true,
+		});
+		expect(reviews).toHaveLength(0);
+		expect(result.event).toBe('NONE');
+	});
+
 	test('sticky の upsert が失敗してもレビューは成功扱い', async () => {
 		const { deps } = setup({ stickyWriteError: new Error('rate limited') });
 		const result = await runReview(deps, CONFIG);

@@ -300,10 +300,16 @@ export async function runReview(
 
 		const canSubmitVerdict = !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX);
 
-		// 判定は threshold と作者の条件を満たすときしか使わない。使わない実行で
-		// listReviews を叩くと、無関係な API 障害で成功した実行を落としかねない。
+		// 判定は REQUEST_CHANGES 側か APPROVE 側のどちらかが実際に参照しうる
+		// ときしか使わない。使わない実行で listReviews を叩くと、無関係な API
+		// 障害で成功した実行を落としかねない。approve: true かつ
+		// request-changes-on: none（ブロックはしないが承認はする設定）でも
+		// APPROVE 側が参照するので、threshold だけでは判定できない。
 		let currentVerdict: OwnVerdictState | null = null;
-		if (config.requestChangesOn !== 'none' && canSubmitVerdict) {
+		if (
+			canSubmitVerdict &&
+			(config.requestChangesOn !== 'none' || config.approve)
+		) {
 			try {
 				currentVerdict = (await github.getOwnVerdict())?.state ?? null;
 			} catch (error) {
