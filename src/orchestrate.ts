@@ -11,7 +11,7 @@ import {
 } from './core/render';
 import { planResolutions } from './core/resolution';
 import type { Severity } from './core/schema';
-import { pickLiveVerdict } from './core/verdict';
+import { type LiveVerdict, pickLiveVerdict } from './core/verdict';
 import { type AgentOutcome, SUBMIT_TOOL_NAME } from './io/agent';
 import type {
 	GitHubClient,
@@ -36,8 +36,8 @@ export interface RunResult {
 	event: ReviewEvent;
 	counts: Record<Severity, number>;
 	findingsCount: number;
-	incompleteFiles: number;
 	resolvedCount: number;
+	incompleteFiles: number;
 	error: string | null;
 }
 
@@ -60,13 +60,30 @@ export async function runReview(
 		event: 'NONE',
 		counts: emptyCounts(),
 		findingsCount: 0,
-		incompleteFiles: 0,
 		resolvedCount: 0,
+		incompleteFiles: 0,
 		error,
 	});
 
-	const failure = async (error: string): Promise<RunResult> => {
+	const failure = async (
+		error: string,
+		liveVerdict: LiveVerdict | null,
+	): Promise<RunResult> => {
 		log(`review failed: ${error}`);
+
+		// 承認済みのまま失敗すると PR が緑に見える。fail-on-error は job を
+		// 落とすが、PR に付いた承認は消えない。
+		if (liveVerdict?.state === 'APPROVED') {
+			try {
+				await github.dismissReview(
+					liveVerdict.id,
+					'The automated review could not be completed.',
+				);
+			} catch (dismissError) {
+				log(`could not dismiss own approval: ${describe(dismissError)}`);
+			}
+		}
+
 		try {
 			await github.createReview({
 				body: renderFailureBody(error, config.language),
@@ -84,7 +101,7 @@ export async function runReview(
 	try {
 		pr = await github.getPullRequest();
 	} catch (error) {
-		return failure(`could not fetch pull request: ${describe(error)}`);
+		return failure(`could not fetch pull request: ${describe(error)}`, null);
 	}
 
 	if (pr.isFork) {
@@ -96,6 +113,8 @@ export async function runReview(
 		return aborted(error);
 	}
 
+	let liveVerdict: LiveVerdict | null = null;
+
 	try {
 		log(`reviewing ${pr.baseSha}...${pr.headSha}`);
 
@@ -105,56 +124,13 @@ export async function runReview(
 			maxBytes: config.diffMaxBytes,
 		});
 
-		if (analysis.text.trim() === '') {
-			log('no reviewable changes');
-			return {
-				status: 'success',
-				event: 'NONE',
-				counts: emptyCounts(),
-				findingsCount: 0,
-				incompleteFiles: analysis.oversizedFiles.length,
-				resolvedCount: 0,
-				error: null,
-			};
-		}
-
-		const instructions =
-			(await deps.readInstructions(config.instructionsFile)) ??
-			DEFAULT_INSTRUCTIONS;
-
 		const existing = await github.listThreads();
-
-		const prompt = buildPrompt({
-			instructions,
-			repo: config.repo,
-			prNumber: pr.number,
-			prTitle: pr.title,
-			diff: analysis.text,
-			lang: config.language,
-			oversizedFiles: analysis.oversizedFiles,
-			toolName: SUBMIT_TOOL_NAME,
-			outstanding: existing.filter(t => !t.isResolved),
-			resolvedThreads: existing.filter(t => t.isResolved),
-			autoResolve: config.autoResolve,
-		});
-
-		let outcome: AgentOutcome = { ok: false, error: 'not attempted' };
-		for (let attempt = 1; attempt <= config.maxRetries; attempt += 1) {
-			log(`agent attempt ${attempt}/${config.maxRetries}`);
-			outcome = await deps.runAgent({ prompt });
-			if (outcome.ok) break;
-			log(`attempt ${attempt} failed: ${outcome.error}`);
-		}
-		if (!outcome.ok) return failure(outcome.error);
-
 		const reviews = await github.listReviews().catch(error => {
 			// 判定を出し直す側に倒れる。通知が増えるだけで安全側。
 			log(`could not list reviews: ${describe(error)}`);
 			return [];
 		});
-		const liveVerdict = pickLiveVerdict(reviews);
-
-		const { toPost } = dedupe(outcome.findings, existing);
+		liveVerdict = pickLiveVerdict(reviews);
 
 		const inline: InlineCommentInput[] = [];
 		/** スレッドが立った指摘。 */
@@ -163,72 +139,111 @@ export async function runReview(
 		const untracked: KeyedFinding[] = [];
 		/** 差分外を指していて破棄した指摘。 */
 		const dropped: KeyedFinding[] = [];
-
-		for (const finding of toPost) {
-			if (!analysis.commentableLines.has(finding.file)) {
-				// 差分に無いファイルへの指摘。モデルが差分の外を見て組み立てたか、
-				// パスを誤ったかのどちらかで、どちらも承認の根拠にならない。
-				dropped.push(finding);
-				continue;
-			}
-
-			const body = renderInlineComment(finding, config.language);
-			if (
-				finding.line !== null &&
-				isCommentable(analysis, finding.file, finding.line)
-			) {
-				inline.push({ path: finding.file, line: finding.line, body });
-				tracked.push(finding);
-				continue;
-			}
-
-			// 判定より前に投稿する。投稿の失敗が承認の可否に効くため、
-			// 判定の後だと fail closed にできない。
-			try {
-				await github.createFileComment({
-					path: finding.file,
-					body,
-					commitId: pr.headSha,
-				});
-				tracked.push(finding);
-			} catch (error) {
-				log(
-					`could not post file comment on ${finding.file}: ${describe(error)}`,
-				);
-				untracked.push(finding);
-			}
-		}
-
 		const resolvedKeys = new Set<string>();
-		if (config.autoResolve && outcome.resolved.length > 0) {
-			const plan = planResolutions({
-				threads: existing,
-				resolved: outcome.resolved,
-			});
-			if (plan.ignored.length > 0) {
-				log(`ignored unknown resolve keys: ${plan.ignored.join(', ')}`);
-			}
 
-			for (const { thread, reason } of plan.toResolve) {
-				try {
-					// 返信が先。理由の残らない resolve は誰も検証できない。
-					await github.replyToThread({
-						commentId: thread.commentId,
-						body: renderResolveReply({
-							reason,
-							headSha: pr.headSha,
-							lang: config.language,
-						}),
-					});
-				} catch (error) {
-					log(`could not reply to ${thread.key}: ${describe(error)}`);
+		// 差分が空でもスレッドの現状からは判定が出る。エージェントを呼ばないので
+		// 追加コストは無い。
+		const emptyDiff = analysis.text.trim() === '';
+		if (emptyDiff) log('no reviewable changes; deciding from thread state');
+
+		if (!emptyDiff) {
+			const instructions =
+				(await deps.readInstructions(config.instructionsFile)) ??
+				DEFAULT_INSTRUCTIONS;
+
+			const prompt = buildPrompt({
+				instructions,
+				repo: config.repo,
+				prNumber: pr.number,
+				prTitle: pr.title,
+				diff: analysis.text,
+				lang: config.language,
+				oversizedFiles: analysis.oversizedFiles,
+				toolName: SUBMIT_TOOL_NAME,
+				outstanding: config.autoResolve
+					? existing.filter(t => !t.isResolved)
+					: [],
+				resolvedThreads: existing.filter(t => t.isResolved),
+				autoResolve: config.autoResolve,
+			});
+
+			let outcome: AgentOutcome = { ok: false, error: 'not attempted' };
+			for (let attempt = 1; attempt <= config.maxRetries; attempt += 1) {
+				log(`agent attempt ${attempt}/${config.maxRetries}`);
+				outcome = await deps.runAgent({ prompt });
+				if (outcome.ok) break;
+				log(`attempt ${attempt} failed: ${outcome.error}`);
+			}
+			if (!outcome.ok) return failure(outcome.error, liveVerdict);
+
+			const { toPost } = dedupe(outcome.findings, existing);
+
+			for (const finding of toPost) {
+				if (!analysis.commentableLines.has(finding.file)) {
+					// 差分に無いファイルへの指摘。モデルが差分の外を見て組み立てたか、
+					// パスを誤ったかのどちらかで、どちらも承認の根拠にならない。
+					dropped.push(finding);
 					continue;
 				}
+
+				const body = renderInlineComment(finding, config.language);
+				if (
+					finding.line !== null &&
+					isCommentable(analysis, finding.file, finding.line)
+				) {
+					inline.push({ path: finding.file, line: finding.line, body });
+					tracked.push(finding);
+					continue;
+				}
+
+				// 判定より前に投稿する。投稿の失敗が承認の可否に効くため、
+				// 判定の後だと fail closed にできない。
 				try {
-					await github.resolveThread(thread.id);
-					resolvedKeys.add(thread.key);
+					await github.createFileComment({
+						path: finding.file,
+						body,
+						commitId: pr.headSha,
+					});
+					tracked.push(finding);
 				} catch (error) {
-					log(`could not resolve ${thread.key}: ${describe(error)}`);
+					log(
+						`could not post file comment on ${finding.file}: ${describe(error)}`,
+					);
+					untracked.push(finding);
+				}
+			}
+
+			if (config.autoResolve && outcome.resolved.length > 0) {
+				const plan = planResolutions({
+					threads: existing,
+					resolved: outcome.resolved,
+				});
+				if (plan.ignored.length > 0) {
+					log(`ignored unknown resolve keys: ${plan.ignored.join(', ')}`);
+				}
+
+				for (const { thread, reason } of plan.toResolve) {
+					try {
+						// 返信が先。理由の残らない resolve は誰も検証できず、
+						// 巻き戻しを自動化しない以上この通知が唯一の気づく経路になる。
+						await github.replyToThread({
+							commentId: thread.commentId,
+							body: renderResolveReply({
+								reason,
+								headSha: pr.headSha,
+								lang: config.language,
+							}),
+						});
+					} catch (error) {
+						log(`could not reply to ${thread.key}: ${describe(error)}`);
+						continue;
+					}
+					try {
+						await github.resolveThread(thread.id);
+						resolvedKeys.add(thread.key);
+					} catch (error) {
+						log(`could not resolve ${thread.key}: ${describe(error)}`);
+					}
 				}
 			}
 		}
@@ -253,19 +268,17 @@ export async function runReview(
 				tracked.length > 0 || untracked.length > 0 || dropped.length > 0,
 		});
 
-		const body = renderReviewBody({
-			lang: config.language,
-			posted: tracked,
-			droppedFiles: dropped.map(f => f.file),
-			failedComments: untracked.map(f => f.file),
-			excludedFiles: analysis.excludedFiles,
-			oversizedFiles: analysis.oversizedFiles,
-			resolvedCount: resolvedKeys.size,
-		});
-
 		if (event !== 'NONE') {
 			await github.createReview({
-				body,
+				body: renderReviewBody({
+					lang: config.language,
+					posted: tracked,
+					droppedFiles: dropped.map(f => f.file),
+					failedComments: untracked.map(f => f.file),
+					excludedFiles: analysis.excludedFiles,
+					oversizedFiles: analysis.oversizedFiles,
+					resolvedCount: resolvedKeys.size,
+				}),
 				event,
 				commitId: pr.headSha,
 				comments: inline,
@@ -276,7 +289,7 @@ export async function runReview(
 		for (const finding of tracked) counts[finding.severity] += 1;
 
 		log(
-			`tracked ${tracked.length} / untracked ${untracked.length} / dropped ${dropped.length}, event=${event}`,
+			`tracked ${tracked.length} / untracked ${untracked.length} / dropped ${dropped.length} / resolved ${resolvedKeys.size}, event=${event}`,
 		);
 
 		return {
@@ -284,12 +297,12 @@ export async function runReview(
 			event,
 			counts,
 			findingsCount: tracked.length,
-			incompleteFiles: analysis.oversizedFiles.length,
 			resolvedCount: resolvedKeys.size,
+			incompleteFiles: analysis.oversizedFiles.length,
 			error: null,
 		};
 	} catch (error) {
-		return failure(describe(error));
+		return failure(describe(error), liveVerdict);
 	}
 }
 

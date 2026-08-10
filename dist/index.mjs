@@ -26483,12 +26483,17 @@ async function runReview(deps, config) {
 		event: "NONE",
 		counts: emptyCounts(),
 		findingsCount: 0,
-		incompleteFiles: 0,
 		resolvedCount: 0,
+		incompleteFiles: 0,
 		error
 	});
-	const failure = async (error) => {
+	const failure = async (error, liveVerdict) => {
 		log(`review failed: ${error}`);
+		if (liveVerdict?.state === "APPROVED") try {
+			await github.dismissReview(liveVerdict.id, "The automated review could not be completed.");
+		} catch (dismissError) {
+			log(`could not dismiss own approval: ${describe(dismissError)}`);
+		}
 		try {
 			await github.createReview({
 				body: renderFailureBody(error, config.language),
@@ -26505,62 +26510,25 @@ async function runReview(deps, config) {
 	try {
 		pr = await github.getPullRequest();
 	} catch (error) {
-		return failure(`could not fetch pull request: ${describe(error)}`);
+		return failure(`could not fetch pull request: ${describe(error)}`, null);
 	}
 	if (pr.isFork) {
 		const error = "this pull request comes from a fork; GITHUB_TOKEN is read-only and the review cannot be posted";
 		log(error);
 		return aborted(error);
 	}
+	let liveVerdict = null;
 	try {
 		log(`reviewing ${pr.baseSha}...${pr.headSha}`);
 		const analysis = analyzeDiff(await github.getDiff(pr.baseSha, pr.headSha), {
 			exclude: config.exclude,
 			maxBytes: config.diffMaxBytes
 		});
-		if (analysis.text.trim() === "") {
-			log("no reviewable changes");
-			return {
-				status: "success",
-				event: "NONE",
-				counts: emptyCounts(),
-				findingsCount: 0,
-				incompleteFiles: analysis.oversizedFiles.length,
-				resolvedCount: 0,
-				error: null
-			};
-		}
-		const instructions = await deps.readInstructions(config.instructionsFile) ?? DEFAULT_INSTRUCTIONS;
 		const existing = await github.listThreads();
-		const prompt = buildPrompt({
-			instructions,
-			repo: config.repo,
-			prNumber: pr.number,
-			prTitle: pr.title,
-			diff: analysis.text,
-			lang: config.language,
-			oversizedFiles: analysis.oversizedFiles,
-			toolName: SUBMIT_TOOL_NAME,
-			outstanding: existing.filter((t) => !t.isResolved),
-			resolvedThreads: existing.filter((t) => t.isResolved),
-			autoResolve: config.autoResolve
-		});
-		let outcome = {
-			ok: false,
-			error: "not attempted"
-		};
-		for (let attempt = 1; attempt <= config.maxRetries; attempt += 1) {
-			log(`agent attempt ${attempt}/${config.maxRetries}`);
-			outcome = await deps.runAgent({ prompt });
-			if (outcome.ok) break;
-			log(`attempt ${attempt} failed: ${outcome.error}`);
-		}
-		if (!outcome.ok) return failure(outcome.error);
-		const liveVerdict = pickLiveVerdict(await github.listReviews().catch((error) => {
+		liveVerdict = pickLiveVerdict(await github.listReviews().catch((error) => {
 			log(`could not list reviews: ${describe(error)}`);
 			return [];
 		}));
-		const { toPost } = dedupe(outcome.findings, existing);
 		const inline = [];
 		/** スレッドが立った指摘。 */
 		const tracked = [];
@@ -26568,59 +26536,88 @@ async function runReview(deps, config) {
 		const untracked = [];
 		/** 差分外を指していて破棄した指摘。 */
 		const dropped = [];
-		for (const finding of toPost) {
-			if (!analysis.commentableLines.has(finding.file)) {
-				dropped.push(finding);
-				continue;
-			}
-			const body = renderInlineComment(finding, config.language);
-			if (finding.line !== null && isCommentable(analysis, finding.file, finding.line)) {
-				inline.push({
-					path: finding.file,
-					line: finding.line,
-					body
-				});
-				tracked.push(finding);
-				continue;
-			}
-			try {
-				await github.createFileComment({
-					path: finding.file,
-					body,
-					commitId: pr.headSha
-				});
-				tracked.push(finding);
-			} catch (error) {
-				log(`could not post file comment on ${finding.file}: ${describe(error)}`);
-				untracked.push(finding);
-			}
-		}
 		const resolvedKeys = /* @__PURE__ */ new Set();
-		if (config.autoResolve && outcome.resolved.length > 0) {
-			const plan = planResolutions({
-				threads: existing,
-				resolved: outcome.resolved
+		const emptyDiff = analysis.text.trim() === "";
+		if (emptyDiff) log("no reviewable changes; deciding from thread state");
+		if (!emptyDiff) {
+			const prompt = buildPrompt({
+				instructions: await deps.readInstructions(config.instructionsFile) ?? DEFAULT_INSTRUCTIONS,
+				repo: config.repo,
+				prNumber: pr.number,
+				prTitle: pr.title,
+				diff: analysis.text,
+				lang: config.language,
+				oversizedFiles: analysis.oversizedFiles,
+				toolName: SUBMIT_TOOL_NAME,
+				outstanding: config.autoResolve ? existing.filter((t) => !t.isResolved) : [],
+				resolvedThreads: existing.filter((t) => t.isResolved),
+				autoResolve: config.autoResolve
 			});
-			if (plan.ignored.length > 0) log(`ignored unknown resolve keys: ${plan.ignored.join(", ")}`);
-			for (const { thread, reason } of plan.toResolve) {
-				try {
-					await github.replyToThread({
-						commentId: thread.commentId,
-						body: renderResolveReply({
-							reason,
-							headSha: pr.headSha,
-							lang: config.language
-						})
+			let outcome = {
+				ok: false,
+				error: "not attempted"
+			};
+			for (let attempt = 1; attempt <= config.maxRetries; attempt += 1) {
+				log(`agent attempt ${attempt}/${config.maxRetries}`);
+				outcome = await deps.runAgent({ prompt });
+				if (outcome.ok) break;
+				log(`attempt ${attempt} failed: ${outcome.error}`);
+			}
+			if (!outcome.ok) return failure(outcome.error, liveVerdict);
+			const { toPost } = dedupe(outcome.findings, existing);
+			for (const finding of toPost) {
+				if (!analysis.commentableLines.has(finding.file)) {
+					dropped.push(finding);
+					continue;
+				}
+				const body = renderInlineComment(finding, config.language);
+				if (finding.line !== null && isCommentable(analysis, finding.file, finding.line)) {
+					inline.push({
+						path: finding.file,
+						line: finding.line,
+						body
 					});
-				} catch (error) {
-					log(`could not reply to ${thread.key}: ${describe(error)}`);
+					tracked.push(finding);
 					continue;
 				}
 				try {
-					await github.resolveThread(thread.id);
-					resolvedKeys.add(thread.key);
+					await github.createFileComment({
+						path: finding.file,
+						body,
+						commitId: pr.headSha
+					});
+					tracked.push(finding);
 				} catch (error) {
-					log(`could not resolve ${thread.key}: ${describe(error)}`);
+					log(`could not post file comment on ${finding.file}: ${describe(error)}`);
+					untracked.push(finding);
+				}
+			}
+			if (config.autoResolve && outcome.resolved.length > 0) {
+				const plan = planResolutions({
+					threads: existing,
+					resolved: outcome.resolved
+				});
+				if (plan.ignored.length > 0) log(`ignored unknown resolve keys: ${plan.ignored.join(", ")}`);
+				for (const { thread, reason } of plan.toResolve) {
+					try {
+						await github.replyToThread({
+							commentId: thread.commentId,
+							body: renderResolveReply({
+								reason,
+								headSha: pr.headSha,
+								lang: config.language
+							})
+						});
+					} catch (error) {
+						log(`could not reply to ${thread.key}: ${describe(error)}`);
+						continue;
+					}
+					try {
+						await github.resolveThread(thread.id);
+						resolvedKeys.add(thread.key);
+					} catch (error) {
+						log(`could not resolve ${thread.key}: ${describe(error)}`);
+					}
 				}
 			}
 		}
@@ -26637,35 +26634,34 @@ async function runReview(deps, config) {
 			liveVerdict,
 			hasSomethingToReport: tracked.length > 0 || untracked.length > 0 || dropped.length > 0
 		});
-		const body = renderReviewBody({
-			lang: config.language,
-			posted: tracked,
-			droppedFiles: dropped.map((f) => f.file),
-			failedComments: untracked.map((f) => f.file),
-			excludedFiles: analysis.excludedFiles,
-			oversizedFiles: analysis.oversizedFiles,
-			resolvedCount: resolvedKeys.size
-		});
 		if (event !== "NONE") await github.createReview({
-			body,
+			body: renderReviewBody({
+				lang: config.language,
+				posted: tracked,
+				droppedFiles: dropped.map((f) => f.file),
+				failedComments: untracked.map((f) => f.file),
+				excludedFiles: analysis.excludedFiles,
+				oversizedFiles: analysis.oversizedFiles,
+				resolvedCount: resolvedKeys.size
+			}),
 			event,
 			commitId: pr.headSha,
 			comments: inline
 		});
 		const counts = emptyCounts();
 		for (const finding of tracked) counts[finding.severity] += 1;
-		log(`tracked ${tracked.length} / untracked ${untracked.length} / dropped ${dropped.length}, event=${event}`);
+		log(`tracked ${tracked.length} / untracked ${untracked.length} / dropped ${dropped.length} / resolved ${resolvedKeys.size}, event=${event}`);
 		return {
 			status: "success",
 			event,
 			counts,
 			findingsCount: tracked.length,
-			incompleteFiles: analysis.oversizedFiles.length,
 			resolvedCount: resolvedKeys.size,
+			incompleteFiles: analysis.oversizedFiles.length,
 			error: null
 		};
 	} catch (error) {
-		return failure(describe(error));
+		return failure(describe(error), liveVerdict);
 	}
 }
 function describe(error) {

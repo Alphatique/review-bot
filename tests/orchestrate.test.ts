@@ -349,12 +349,52 @@ describe('runReview', () => {
 		expect(reviews[0]!.body).toContain('boom');
 	});
 
-	test('差分が空ならレビューを投稿せず成功で終わる', async () => {
-		const { deps, reviews } = setup({ diff: '' });
+	test('レビューに失敗したら自分の承認を取り下げる', async () => {
+		const { deps, dismissals } = setup({
+			outcomes: [
+				{ ok: false, error: 'boom' },
+				{ ok: false, error: 'boom' },
+				{ ok: false, error: 'boom' },
+			],
+			existingReviews: [
+				{ id: 7, body: `済\n${REVIEW_MARKER}`, state: 'APPROVED' },
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(dismissals).toHaveLength(1);
+		expect(dismissals[0]!.reviewId).toBe(7);
+	});
+
+	test('承認していなければ取り下げない', async () => {
+		const { deps, dismissals } = setup({
+			outcomes: [
+				{ ok: false, error: 'boom' },
+				{ ok: false, error: 'boom' },
+				{ ok: false, error: 'boom' },
+			],
+			existingReviews: [
+				{ id: 7, body: `済\n${REVIEW_MARKER}`, state: 'CHANGES_REQUESTED' },
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(dismissals).toEqual([]);
+	});
+
+	test('差分が空でもスレッドの現状から判定を出す', async () => {
+		const { deps, reviews, prompts } = setup({ diff: '' });
 		const result = await runReview(deps, CONFIG);
-		expect(reviews).toHaveLength(0);
+		expect(prompts).toEqual([]);
+		expect(reviews[0]!.event).toBe('APPROVE');
 		expect(result.status).toBe('success');
-		expect(result.event).toBe('NONE');
+	});
+
+	test('差分が空で未解決が残っていれば REQUEST_CHANGES', async () => {
+		const { deps, reviews } = setup({
+			diff: '',
+			existing: [thread({ severity: 'critical' })],
+		});
+		await runReview(deps, CONFIG);
+		expect(reviews[0]!.event).toBe('REQUEST_CHANGES');
 	});
 
 	test('fork PR は失敗として扱う', async () => {
