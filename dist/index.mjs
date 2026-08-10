@@ -25825,7 +25825,8 @@ const EN = {
 	excludedNote: (files) => `Excluded from review: ${list(files)}`,
 	oversizedWarning: (files) => `> ⚠️ ${files.length} file(s) were skipped because the diff exceeded the size limit and were **not reviewed**: ${list(files)}`,
 	failureBody: "⚠️ The automated review could not be completed. Re-run the workflow or check the job logs.",
-	errorDetails: "Error details"
+	errorDetails: "Error details",
+	resolveReply: (sha, reason) => `✅ Resolved automatically: this looks fixed as of \`${sha}\`.\n\n${reason}`
 };
 const JA = {
 	reviewHeading: "## 🤖 コードレビュー",
@@ -25837,7 +25838,8 @@ const JA = {
 	excludedNote: (files) => `レビュー対象から除外: ${list(files)}`,
 	oversizedWarning: (files) => `> ⚠️ 差分がサイズ上限を超えたため ${files.length} 件のファイルを**レビューしていません**: ${list(files)}`,
 	failureBody: "⚠️ 自動レビューを完了できませんでした。ワークフローを再実行するか、ジョブのログを確認してください。",
-	errorDetails: "エラー概要"
+	errorDetails: "エラー概要",
+	resolveReply: (sha, reason) => `✅ 自動で解決済みにしました。\`${sha}\` の時点で解消していると判断しました。\n\n${reason}`
 };
 function messages(lang) {
 	return lang === "ja" ? JA : EN;
@@ -26142,6 +26144,12 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
 		}
 	}
 }`;
+const RESOLVE_THREAD_MUTATION = `
+mutation($threadId: ID!) {
+	resolveReviewThread(input: { threadId: $threadId }) {
+		thread { id }
+	}
+}`;
 function createGitHubClient(options) {
 	const octokit = (0, import_github.getOctokit)(options.token);
 	const { owner, repo, prNumber } = options;
@@ -26249,6 +26257,18 @@ function createGitHubClient(options) {
 				review_id: reviewId,
 				message
 			});
+		},
+		async replyToThread(input) {
+			await octokit.rest.pulls.createReplyForReviewComment({
+				owner,
+				repo,
+				pull_number: prNumber,
+				comment_id: input.commentId,
+				body: input.body
+			});
+		},
+		async resolveThread(threadId) {
+			await octokit.graphql(RESOLVE_THREAD_MUTATION, { threadId });
 		}
 	};
 }
@@ -26371,6 +26391,13 @@ function renderFailureBody(errorText, lang) {
 		REVIEW_MARKER
 	].join("\n")}\n`;
 }
+/**
+* resolve の前にスレッドへ返す監査跡。
+* 巻き戻しを自動化しないので、この返信の通知が誤 resolve に気づく唯一の経路になる。
+*/
+function renderResolveReply(input) {
+	return `${messages(input.lang).resolveReply(sanitizeInline(input.headSha).slice(0, 7), sanitizeInline(input.reason))}\n`;
+}
 function renderCounts(findings) {
 	const parts = [];
 	for (const severity of SEVERITIES) {
@@ -26394,6 +26421,34 @@ function sanitizePath(text) {
 /** フェンス内に置くエラー本文用。改行は情報なので保つ。 */
 function sanitizeFenced(text) {
 	return text.replaceAll("<", "&lt;").replaceAll("```", "` ` `");
+}
+//#endregion
+//#region src/core/resolution.ts
+/**
+* モデルが「解消済み」と報告した key を、実際に触ってよいスレッドに突き合わせる。
+* 未解決のスレッドしか対象にしないので、モデルが余計なものを返しても
+* 人が下した判断は動かない。
+*/
+function planResolutions(input) {
+	const open = /* @__PURE__ */ new Map();
+	for (const thread of input.threads) if (!thread.isResolved) open.set(thread.key, thread);
+	const toResolve = [];
+	const ignored = [];
+	const seen = /* @__PURE__ */ new Set();
+	for (const entry of input.resolved) {
+		if (seen.has(entry.key)) continue;
+		seen.add(entry.key);
+		const thread = open.get(entry.key);
+		if (thread) toResolve.push({
+			thread,
+			reason: entry.reason
+		});
+		else ignored.push(entry.key);
+	}
+	return {
+		toResolve,
+		ignored
+	};
 }
 //#endregion
 //#region src/core/verdict.ts
@@ -26429,6 +26484,7 @@ async function runReview(deps, config) {
 		counts: emptyCounts(),
 		findingsCount: 0,
 		incompleteFiles: 0,
+		resolvedCount: 0,
 		error
 	});
 	const failure = async (error) => {
@@ -26470,6 +26526,7 @@ async function runReview(deps, config) {
 				counts: emptyCounts(),
 				findingsCount: 0,
 				incompleteFiles: analysis.oversizedFiles.length,
+				resolvedCount: 0,
 				error: null
 			};
 		}
@@ -26538,9 +26595,38 @@ async function runReview(deps, config) {
 				untracked.push(finding);
 			}
 		}
+		const resolvedKeys = /* @__PURE__ */ new Set();
+		if (config.autoResolve && outcome.resolved.length > 0) {
+			const plan = planResolutions({
+				threads: existing,
+				resolved: outcome.resolved
+			});
+			if (plan.ignored.length > 0) log(`ignored unknown resolve keys: ${plan.ignored.join(", ")}`);
+			for (const { thread, reason } of plan.toResolve) {
+				try {
+					await github.replyToThread({
+						commentId: thread.commentId,
+						body: renderResolveReply({
+							reason,
+							headSha: pr.headSha,
+							lang: config.language
+						})
+					});
+				} catch (error) {
+					log(`could not reply to ${thread.key}: ${describe(error)}`);
+					continue;
+				}
+				try {
+					await github.resolveThread(thread.id);
+					resolvedKeys.add(thread.key);
+				} catch (error) {
+					log(`could not resolve ${thread.key}: ${describe(error)}`);
+				}
+			}
+		}
 		const event = decideEvent({
 			outstanding: [
-				...existing.filter((t) => !t.isResolved).map((t) => t.severity),
+				...existing.filter((t) => !t.isResolved && !resolvedKeys.has(t.key)).map((t) => t.severity),
 				...tracked.map((f) => f.severity),
 				...untracked.map((f) => f.severity)
 			],
@@ -26558,7 +26644,7 @@ async function runReview(deps, config) {
 			failedComments: untracked.map((f) => f.file),
 			excludedFiles: analysis.excludedFiles,
 			oversizedFiles: analysis.oversizedFiles,
-			resolvedCount: 0
+			resolvedCount: resolvedKeys.size
 		});
 		if (event !== "NONE") await github.createReview({
 			body,
@@ -26575,6 +26661,7 @@ async function runReview(deps, config) {
 			counts,
 			findingsCount: tracked.length,
 			incompleteFiles: analysis.oversizedFiles.length,
+			resolvedCount: resolvedKeys.size,
 			error: null
 		};
 	} catch (error) {

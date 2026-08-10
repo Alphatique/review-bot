@@ -12,6 +12,7 @@ export interface Messages {
 	oversizedWarning: (files: readonly string[]) => string;
 	failureBody: string;
 	errorDetails: string;
+	resolveReply: (sha: string, reason: string) => string;
 }
 
 const list = (files: readonly string[]): string =>
@@ -33,6 +34,8 @@ const EN: Messages = {
 	failureBody:
 		'⚠️ The automated review could not be completed. Re-run the workflow or check the job logs.',
 	errorDetails: 'Error details',
+	resolveReply: (sha, reason) =>
+		`✅ Resolved automatically: this looks fixed as of \`${sha}\`.\n\n${reason}`,
 };
 
 const JA: Messages = {
@@ -50,6 +53,8 @@ const JA: Messages = {
 	failureBody:
 		'⚠️ 自動レビューを完了できませんでした。ワークフローを再実行するか、ジョブのログを確認してください。',
 	errorDetails: 'エラー概要',
+	resolveReply: (sha, reason) =>
+		`✅ 自動で解決済みにしました。\`${sha}\` の時点で解消していると判断しました。\n\n${reason}`,
 };
 
 export function messages(lang: Language): Messages {

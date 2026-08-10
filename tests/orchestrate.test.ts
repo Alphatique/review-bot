@@ -66,6 +66,8 @@ interface FakeOptions {
 	outcomes?: AgentOutcome[];
 	instructions?: string | null;
 	fileCommentFails?: boolean;
+	resolveFails?: boolean;
+	replyFails?: boolean;
 }
 
 function setup(options: FakeOptions = {}) {
@@ -75,6 +77,8 @@ function setup(options: FakeOptions = {}) {
 	const outcomes = [...(options.outcomes ?? [])];
 	const dismissals: { reviewId: number; message: string }[] = [];
 	const fileComments: FileCommentInput[] = [];
+	const replies: { commentId: number; body: string }[] = [];
+	const resolvedThreads: string[] = [];
 
 	const github: GitHubClient = {
 		getPullRequest: async () => ({ ...PR, ...options.pr }),
@@ -94,6 +98,14 @@ function setup(options: FakeOptions = {}) {
 		dismissReview: async (reviewId, message) => {
 			dismissals.push({ reviewId, message });
 		},
+		replyToThread: async input => {
+			if (options.replyFails) throw new Error('boom');
+			replies.push(input);
+		},
+		resolveThread: async threadId => {
+			if (options.resolveFails) throw new Error('boom');
+			resolvedThreads.push(threadId);
+		},
 	};
 
 	const deps: OrchestrateDeps = {
@@ -106,7 +118,16 @@ function setup(options: FakeOptions = {}) {
 		log: () => {},
 	};
 
-	return { deps, reviews, prompts, diffRequests, dismissals, fileComments };
+	return {
+		deps,
+		reviews,
+		prompts,
+		diffRequests,
+		dismissals,
+		fileComments,
+		replies,
+		resolvedThreads,
+	};
 }
 
 function finding(overrides: Partial<Finding> = {}): Finding {
@@ -420,5 +441,90 @@ describe('runReview', () => {
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.event).toBe('APPROVE');
+	});
+
+	test('直った指摘を resolve して APPROVE まで 1 実行で到達する', async () => {
+		const t = thread({ severity: 'critical' });
+		const { deps, reviews, replies, resolvedThreads } = setup({
+			existing: [t],
+			outcomes: [
+				{
+					ok: true,
+					findings: [],
+					resolved: [{ key: t.key, reason: '直った' }],
+				},
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(replies).toHaveLength(1);
+		expect(resolvedThreads).toEqual([t.id]);
+		expect(reviews[0]!.event).toBe('APPROVE');
+	});
+
+	test('resolve に失敗したら未解決として数える', async () => {
+		const t = thread({ severity: 'critical' });
+		const { deps, reviews } = setup({
+			existing: [t],
+			outcomes: [
+				{
+					ok: true,
+					findings: [],
+					resolved: [{ key: t.key, reason: '直った' }],
+				},
+			],
+			resolveFails: true,
+		});
+		await runReview(deps, CONFIG);
+		expect(reviews[0]!.event).toBe('REQUEST_CHANGES');
+	});
+
+	test('返信に失敗したら resolve しない', async () => {
+		const t = thread();
+		const { deps, resolvedThreads } = setup({
+			existing: [t],
+			outcomes: [
+				{
+					ok: true,
+					findings: [],
+					resolved: [{ key: t.key, reason: '直った' }],
+				},
+			],
+			replyFails: true,
+		});
+		await runReview(deps, CONFIG);
+		expect(resolvedThreads).toEqual([]);
+	});
+
+	test('人が resolve 済みのスレッドには触らない', async () => {
+		const t = thread({ isResolved: true });
+		const { deps, replies, resolvedThreads } = setup({
+			existing: [t],
+			outcomes: [
+				{
+					ok: true,
+					findings: [],
+					resolved: [{ key: t.key, reason: '直った' }],
+				},
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(replies).toEqual([]);
+		expect(resolvedThreads).toEqual([]);
+	});
+
+	test('auto-resolve が false なら何もしない', async () => {
+		const t = thread();
+		const { deps, resolvedThreads } = setup({
+			existing: [t],
+			outcomes: [
+				{
+					ok: true,
+					findings: [],
+					resolved: [{ key: t.key, reason: '直った' }],
+				},
+			],
+		});
+		await runReview(deps, { ...CONFIG, autoResolve: false });
+		expect(resolvedThreads).toEqual([]);
 	});
 });

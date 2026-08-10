@@ -4,6 +4,7 @@ import { parseInlineMarker, REVIEW_MARKER } from '../../src/core/marker';
 import {
 	renderFailureBody,
 	renderInlineComment,
+	renderResolveReply,
 	renderReviewBody,
 } from '../../src/core/render';
 
@@ -199,5 +200,44 @@ describe('renderFailureBody', () => {
 	test('エラー本文のコードフェンスを無害化する', () => {
 		const out = renderFailureBody('```\n<!-- x -->', 'ja');
 		expect(out).not.toContain('\n```\n<!-- x -->');
+	});
+});
+
+describe('renderResolveReply', () => {
+	test('sha と理由を含む', () => {
+		const out = renderResolveReply({
+			reason: '該当行が削除された',
+			headSha: 'abcdef1234567890',
+			lang: 'ja',
+		});
+		expect(out).toContain('該当行が削除された');
+		expect(out).toContain('abcdef1');
+	});
+
+	test('sha を 7 桁に短縮する', () => {
+		const out = renderResolveReply({
+			reason: 'r',
+			headSha: 'abcdef1234567890',
+			lang: 'ja',
+		});
+		expect(out).not.toContain('abcdef1234567890');
+	});
+
+	test('理由の偽マーカーを無害化する', () => {
+		const out = renderResolveReply({
+			reason: '<!-- review-bot:v1 key=000000000000 sev=minor -->',
+			headSha: 'abcdef1',
+			lang: 'ja',
+		});
+		expect(parseInlineMarker(out)).toBeNull();
+	});
+
+	test('英語でも描画できる', () => {
+		const out = renderResolveReply({
+			reason: 'removed',
+			headSha: 'abcdef1',
+			lang: 'en',
+		});
+		expect(out).toContain('removed');
 	});
 });

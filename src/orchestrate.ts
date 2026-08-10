@@ -6,8 +6,10 @@ import { buildPrompt, DEFAULT_INSTRUCTIONS } from './core/prompt';
 import {
 	renderFailureBody,
 	renderInlineComment,
+	renderResolveReply,
 	renderReviewBody,
 } from './core/render';
+import { planResolutions } from './core/resolution';
 import type { Severity } from './core/schema';
 import { pickLiveVerdict } from './core/verdict';
 import { type AgentOutcome, SUBMIT_TOOL_NAME } from './io/agent';
@@ -35,6 +37,7 @@ export interface RunResult {
 	counts: Record<Severity, number>;
 	findingsCount: number;
 	incompleteFiles: number;
+	resolvedCount: number;
 	error: string | null;
 }
 
@@ -58,6 +61,7 @@ export async function runReview(
 		counts: emptyCounts(),
 		findingsCount: 0,
 		incompleteFiles: 0,
+		resolvedCount: 0,
 		error,
 	});
 
@@ -109,6 +113,7 @@ export async function runReview(
 				counts: emptyCounts(),
 				findingsCount: 0,
 				incompleteFiles: analysis.oversizedFiles.length,
+				resolvedCount: 0,
 				error: null,
 			};
 		}
@@ -194,8 +199,44 @@ export async function runReview(
 			}
 		}
 
+		const resolvedKeys = new Set<string>();
+		if (config.autoResolve && outcome.resolved.length > 0) {
+			const plan = planResolutions({
+				threads: existing,
+				resolved: outcome.resolved,
+			});
+			if (plan.ignored.length > 0) {
+				log(`ignored unknown resolve keys: ${plan.ignored.join(', ')}`);
+			}
+
+			for (const { thread, reason } of plan.toResolve) {
+				try {
+					// 返信が先。理由の残らない resolve は誰も検証できない。
+					await github.replyToThread({
+						commentId: thread.commentId,
+						body: renderResolveReply({
+							reason,
+							headSha: pr.headSha,
+							lang: config.language,
+						}),
+					});
+				} catch (error) {
+					log(`could not reply to ${thread.key}: ${describe(error)}`);
+					continue;
+				}
+				try {
+					await github.resolveThread(thread.id);
+					resolvedKeys.add(thread.key);
+				} catch (error) {
+					log(`could not resolve ${thread.key}: ${describe(error)}`);
+				}
+			}
+		}
+
 		const outstanding: Severity[] = [
-			...existing.filter(t => !t.isResolved).map(t => t.severity),
+			...existing
+				.filter(t => !t.isResolved && !resolvedKeys.has(t.key))
+				.map(t => t.severity),
 			...tracked.map(f => f.severity),
 			// 投稿できなくても問題は実在するので未解決として数える。
 			...untracked.map(f => f.severity),
@@ -219,7 +260,7 @@ export async function runReview(
 			failedComments: untracked.map(f => f.file),
 			excludedFiles: analysis.excludedFiles,
 			oversizedFiles: analysis.oversizedFiles,
-			resolvedCount: 0,
+			resolvedCount: resolvedKeys.size,
 		});
 
 		if (event !== 'NONE') {
@@ -244,6 +285,7 @@ export async function runReview(
 			counts,
 			findingsCount: tracked.length,
 			incompleteFiles: analysis.oversizedFiles.length,
+			resolvedCount: resolvedKeys.size,
 			error: null,
 		};
 	} catch (error) {

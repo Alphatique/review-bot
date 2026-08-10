@@ -85,6 +85,24 @@ export function renderFailureBody(errorText: string, lang: Language): string {
 	].join('\n')}\n`;
 }
 
+export interface ResolveReplyInput {
+	reason: string;
+	headSha: string;
+	lang: Language;
+}
+
+/**
+ * resolve の前にスレッドへ返す監査跡。
+ * 巻き戻しを自動化しないので、この返信の通知が誤 resolve に気づく唯一の経路になる。
+ */
+export function renderResolveReply(input: ResolveReplyInput): string {
+	const m = messages(input.lang);
+	return `${m.resolveReply(
+		sanitizeInline(input.headSha).slice(0, 7),
+		sanitizeInline(input.reason),
+	)}\n`;
+}
+
 function renderCounts(findings: readonly KeyedFinding[]): string {
 	const parts: string[] = [];
 	for (const severity of SEVERITIES) {

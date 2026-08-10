@@ -43,6 +43,8 @@ export interface GitHubClient {
 	/** 自分のものかどうかは判定せず、そのまま古い順に返す。 */
 	listReviews(): Promise<ReviewRecord[]>;
 	dismissReview(reviewId: number, message: string): Promise<void>;
+	replyToThread(input: { commentId: number; body: string }): Promise<void>;
+	resolveThread(threadId: string): Promise<void>;
 }
 
 export interface GitHubClientOptions {
@@ -86,6 +88,13 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
 				}
 			}
 		}
+	}
+}`;
+
+const RESOLVE_THREAD_MUTATION = `
+mutation($threadId: ID!) {
+	resolveReviewThread(input: { threadId: $threadId }) {
+		thread { id }
 	}
 }`;
 
@@ -209,6 +218,20 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 				review_id: reviewId,
 				message,
 			});
+		},
+
+		async replyToThread(input) {
+			await octokit.rest.pulls.createReplyForReviewComment({
+				owner,
+				repo,
+				pull_number: prNumber,
+				comment_id: input.commentId,
+				body: input.body,
+			});
+		},
+
+		async resolveThread(threadId) {
+			await octokit.graphql(RESOLVE_THREAD_MUTATION, { threadId });
 		},
 	};
 }
