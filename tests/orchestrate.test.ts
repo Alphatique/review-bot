@@ -191,6 +191,30 @@ describe('runReview', () => {
 		expect(reviews[0]!.comments).toHaveLength(0);
 	});
 
+	test('resolve 済みの既存指摘でも再投稿しない', async () => {
+		const f = finding();
+		const { deps, reviews } = setup({
+			outcomes: [{ ok: true, findings: [f] }],
+			existing: [
+				thread({ key: findingKey(f.file, f.title), isResolved: true }),
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(reviews[0]!.comments).toHaveLength(0);
+	});
+
+	test('outdated な既存指摘でも再投稿しない', async () => {
+		const f = finding();
+		const { deps, reviews } = setup({
+			outcomes: [{ ok: true, findings: [f] }],
+			existing: [
+				thread({ key: findingKey(f.file, f.title), isOutdated: true }),
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(reviews[0]!.comments).toHaveLength(0);
+	});
+
 	test('未解決の既存指摘があれば REQUEST_CHANGES を維持する', async () => {
 		const { deps, reviews } = setup({
 			outcomes: [{ ok: true, findings: [] }],
