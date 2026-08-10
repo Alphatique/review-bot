@@ -355,6 +355,33 @@ describe('runReview', () => {
 		expect(prompts[0]).toContain('owner/repo');
 	});
 
+	test('未解決 / 解決済みの既存指摘を autoResolve に応じてプロンプトへ渡す', async () => {
+		// key / title をそれぞれ別の値にする。同じ値だと「未解決の key を含む」が
+		// 解決済み側の混入でも満たされてしまい、フィルタの向きを検証できない。
+		const UNRESOLVED_KEY = 'unresolvedkey';
+		const RESOLVED_TITLE = '解決済みタイトル';
+		const unresolved = thread({
+			key: UNRESOLVED_KEY,
+			title: '未解決タイトル',
+			isResolved: false,
+		});
+		const resolved = thread({
+			key: 'resolvedkeyxx',
+			title: RESOLVED_TITLE,
+			isResolved: true,
+		});
+
+		const on = setup({ existing: [unresolved, resolved] });
+		await runReview(on.deps, CONFIG);
+		expect(on.prompts[0]).toContain(UNRESOLVED_KEY);
+		expect(on.prompts[0]).toContain(RESOLVED_TITLE);
+
+		const off = setup({ existing: [unresolved, resolved] });
+		await runReview(off.deps, { ...CONFIG, autoResolve: false });
+		expect(off.prompts[0]).not.toContain(UNRESOLVED_KEY);
+		expect(off.prompts[0]).toContain(RESOLVED_TITLE);
+	});
+
 	test('重大度ごとの件数を返す', async () => {
 		const { deps } = setup({
 			outcomes: [
