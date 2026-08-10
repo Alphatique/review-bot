@@ -7,7 +7,7 @@ const VALID = {
 	repo: 'owner/repo',
 	'pr-number': '42',
 	language: 'ja',
-	'request-changes-on': 'major',
+	'block-on': 'major',
 	'fail-on-error': 'true',
 	'fail-on-incomplete': 'false',
 	model: 'claude-sonnet-5',
@@ -70,8 +70,20 @@ describe('loadConfig', () => {
 		expect(loadConfig({ ...VALID, language: 'fr' }).ok).toBe(false);
 	});
 
-	test('未知の request-changes-on を拒否する', () => {
-		expect(loadConfig({ ...VALID, 'request-changes-on': 'P0' }).ok).toBe(false);
+	test('未知の block-on を拒否する', () => {
+		expect(loadConfig({ ...VALID, 'block-on': 'P0' }).ok).toBe(false);
+	});
+
+	test('approve の既定は true', () => {
+		const result = loadConfig(VALID);
+		if (!result.ok) throw new Error('expected ok');
+		expect(result.value.approve).toBe(true);
+	});
+
+	test('approve を false にできる', () => {
+		const result = loadConfig({ ...VALID, approve: 'false' });
+		if (!result.ok) throw new Error('expected ok');
+		expect(result.value.approve).toBe(false);
 	});
 
 	test('未知の effort を拒否する', () => {

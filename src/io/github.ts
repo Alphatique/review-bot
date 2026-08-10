@@ -22,7 +22,7 @@ export interface InlineCommentInput {
 
 export interface CreateReviewInput {
 	body: string;
-	event: ReviewEvent;
+	event: Exclude<ReviewEvent, 'NONE'>;
 	commitId: string;
 	comments: readonly InlineCommentInput[];
 }

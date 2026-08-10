@@ -1,97 +1,118 @@
 import { describe, expect, test } from 'bun:test';
-import { decideEvent } from '../../src/core/decision';
-import type { Severity } from '../../src/core/schema';
-import type { ThreadInfo } from '../../src/core/thread';
+import { decideEvent, type DecisionInput } from '../../src/core/decision';
 
-function existing(severity: Severity, isResolved = false): ThreadInfo {
+function input(overrides: Partial<DecisionInput> = {}): DecisionInput {
 	return {
-		id: 'PRRT_1',
-		commentId: 1,
-		key: 'x'.repeat(12),
-		severity,
-		file: 'src/a.ts',
-		line: 1,
-		title: 'なにか',
-		isResolved,
-		isOutdated: false,
+		outstanding: [],
+		blockOn: 'major',
+		approve: true,
+		hasUntrackedFindings: false,
+		canSubmitVerdict: true,
+		liveVerdict: null,
+		hasSomethingToReport: false,
+		...overrides,
 	};
 }
 
 describe('decideEvent', () => {
-	test('threshold が none なら常に COMMENT', () => {
+	test('閾値以上の未解決があれば REQUEST_CHANGES', () => {
+		expect(decideEvent(input({ outstanding: ['major'] }))).toBe(
+			'REQUEST_CHANGES',
+		);
+	});
+
+	test('閾値より重い未解決でも REQUEST_CHANGES', () => {
+		expect(decideEvent(input({ outstanding: ['critical'] }))).toBe(
+			'REQUEST_CHANGES',
+		);
+	});
+
+	test('閾値未満だけなら APPROVE', () => {
+		expect(decideEvent(input({ outstanding: ['minor'] }))).toBe('APPROVE');
+	});
+
+	test('未解決が無ければ APPROVE', () => {
+		expect(decideEvent(input())).toBe('APPROVE');
+	});
+
+	test('block-on が none なら REQUEST_CHANGES を出さない', () => {
 		expect(
-			decideEvent({
-				newFindings: [{ severity: 'critical' }],
-				existing: [],
-				threshold: 'none',
-				canRequestChanges: true,
-			}),
+			decideEvent(input({ blockOn: 'none', outstanding: ['critical'] })),
+		).toBe('APPROVE');
+	});
+
+	test('approve が false なら承認せず、報告するものが無ければ NONE', () => {
+		expect(decideEvent(input({ approve: false }))).toBe('NONE');
+	});
+
+	test('approve が false でも報告するものがあれば COMMENT', () => {
+		expect(
+			decideEvent(input({ approve: false, hasSomethingToReport: true })),
 		).toBe('COMMENT');
 	});
 
-	test('閾値以上の新規指摘があれば REQUEST_CHANGES', () => {
+	test('追跡できない指摘があれば APPROVE しない', () => {
 		expect(
-			decideEvent({
-				newFindings: [{ severity: 'critical' }],
-				existing: [],
-				threshold: 'critical',
-				canRequestChanges: true,
-			}),
-		).toBe('REQUEST_CHANGES');
-	});
-
-	test('閾値未満の指摘だけなら COMMENT', () => {
-		expect(
-			decideEvent({
-				newFindings: [{ severity: 'minor' }],
-				existing: [],
-				threshold: 'major',
-				canRequestChanges: true,
-			}),
+			decideEvent(
+				input({ hasUntrackedFindings: true, hasSomethingToReport: true }),
+			),
 		).toBe('COMMENT');
 	});
 
-	test('未解決の既存指摘が閾値以上なら REQUEST_CHANGES を維持する', () => {
+	test('判定を提出できないなら REQUEST_CHANGES を COMMENT に落とす', () => {
 		expect(
-			decideEvent({
-				newFindings: [],
-				existing: [existing('major')],
-				threshold: 'major',
-				canRequestChanges: true,
-			}),
-		).toBe('REQUEST_CHANGES');
-	});
-
-	test('既存指摘が resolve 済みなら数えない', () => {
-		expect(
-			decideEvent({
-				newFindings: [],
-				existing: [existing('critical', true)],
-				threshold: 'critical',
-				canRequestChanges: true,
-			}),
+			decideEvent(
+				input({
+					outstanding: ['critical'],
+					canSubmitVerdict: false,
+					hasSomethingToReport: true,
+				}),
+			),
 		).toBe('COMMENT');
 	});
 
-	test('canRequestChanges が false なら必ず COMMENT', () => {
+	test('判定を提出できないなら APPROVE も COMMENT に落とす', () => {
 		expect(
-			decideEvent({
-				newFindings: [{ severity: 'critical' }],
-				existing: [],
-				threshold: 'critical',
-				canRequestChanges: false,
-			}),
+			decideEvent(
+				input({ canSubmitVerdict: false, hasSomethingToReport: true }),
+			),
 		).toBe('COMMENT');
 	});
 
-	test('指摘が無ければ COMMENT', () => {
+	test('生きている判定と同じなら出し直さない', () => {
 		expect(
-			decideEvent({
-				newFindings: [],
-				existing: [],
-				threshold: 'minor',
-				canRequestChanges: true,
-			}),
+			decideEvent(
+				input({
+					outstanding: ['critical'],
+					liveVerdict: { id: 1, state: 'CHANGES_REQUESTED' },
+				}),
+			),
+		).toBe('NONE');
+	});
+
+	test('生きている判定と同じでも報告するものがあれば COMMENT で投稿する', () => {
+		expect(
+			decideEvent(
+				input({
+					outstanding: ['critical'],
+					liveVerdict: { id: 1, state: 'CHANGES_REQUESTED' },
+					hasSomethingToReport: true,
+				}),
+			),
 		).toBe('COMMENT');
+	});
+
+	test('生きている判定と変わるなら出し直す', () => {
+		expect(
+			decideEvent(
+				input({ liveVerdict: { id: 1, state: 'CHANGES_REQUESTED' } }),
+			),
+		).toBe('APPROVE');
+	});
+
+	test('報告するものも判定の変化も無ければ NONE', () => {
+		expect(
+			decideEvent(input({ liveVerdict: { id: 1, state: 'APPROVED' } })),
+		).toBe('NONE');
 	});
 });

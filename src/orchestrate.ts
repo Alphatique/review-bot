@@ -9,6 +9,7 @@ import {
 	renderSummary,
 } from './core/render';
 import type { Severity } from './core/schema';
+import { pickLiveVerdict } from './core/verdict';
 import { type AgentOutcome, SUBMIT_TOOL_NAME } from './io/agent';
 import type {
 	GitHubClient,
@@ -30,7 +31,7 @@ export interface OrchestrateDeps {
 
 export interface RunResult {
 	status: 'success' | 'failed';
-	event: ReviewEvent | 'NONE';
+	event: ReviewEvent;
 	counts: Record<Severity, number>;
 	findingsCount: number;
 	incompleteFiles: number;
@@ -137,6 +138,13 @@ export async function runReview(
 		if (!outcome.ok) return failure(outcome.error);
 
 		const existing = await github.listThreads();
+		const reviews = await github.listReviews().catch(error => {
+			// 判定を出し直す側に倒れる。通知が増えるだけで安全側。
+			log(`could not list reviews: ${describe(error)}`);
+			return [];
+		});
+		const liveVerdict = pickLiveVerdict(reviews);
+
 		const { toPost } = dedupe(outcome.findings, existing);
 
 		const inline: InlineCommentInput[] = [];
@@ -158,11 +166,19 @@ export async function runReview(
 			}
 		}
 
+		const outstanding: Severity[] = [
+			...existing.filter(t => !t.isResolved).map(t => t.severity),
+			...toPost.map(f => f.severity),
+		];
+
 		const event = decideEvent({
-			newFindings: toPost,
-			existing,
-			threshold: config.requestChangesOn,
-			canRequestChanges: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
+			outstanding,
+			blockOn: config.blockOn,
+			approve: config.approve,
+			hasUntrackedFindings: false,
+			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
+			liveVerdict,
+			hasSomethingToReport: toPost.length > 0,
 		});
 
 		const body = renderSummary({
@@ -173,12 +189,14 @@ export async function runReview(
 			oversizedFiles: analysis.oversizedFiles,
 		});
 
-		await github.createReview({
-			body,
-			event,
-			commitId: pr.headSha,
-			comments: inline,
-		});
+		if (event !== 'NONE') {
+			await github.createReview({
+				body,
+				event,
+				commitId: pr.headSha,
+				comments: inline,
+			});
+		}
 
 		const counts = emptyCounts();
 		for (const finding of toPost) counts[finding.severity] += 1;

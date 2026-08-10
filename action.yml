@@ -30,10 +30,14 @@ inputs:
     description: 'Output language for findings and the summary (en or ja).'
     required: false
     default: 'en'
-  request-changes-on:
-    description: 'Submit the review as REQUEST_CHANGES when a finding at or above this severity exists (none, critical, major, minor).'
+  block-on:
+    description: 'Submit REQUEST_CHANGES when an unresolved finding at or above this severity exists, otherwise APPROVE (none, critical, major, minor).'
     required: false
-    default: 'critical'
+    default: 'major'
+  approve:
+    description: 'Let the action submit APPROVE when nothing at or above block-on remains. Set to false to never approve.'
+    required: false
+    default: 'true'
   fail-on-error:
     description: 'Fail the action when the review itself could not be completed.'
     required: false
@@ -72,7 +76,7 @@ outputs:
     description: 'success or failed'
     value: ${{ steps.review.outputs.status }}
   review-event:
-    description: 'COMMENT, REQUEST_CHANGES, or NONE'
+    description: 'COMMENT, REQUEST_CHANGES, APPROVE, or NONE'
     value: ${{ steps.review.outputs['review-event'] }}
   findings-count:
     description: 'Number of new findings posted'
@@ -111,7 +115,8 @@ runs:
         INPUT_INSTRUCTIONS-FILE: ${{ inputs.instructions-file }}
         INPUT_EXCLUDE: ${{ inputs.exclude }}
         INPUT_LANGUAGE: ${{ inputs.language }}
-        INPUT_REQUEST-CHANGES-ON: ${{ inputs.request-changes-on }}
+        INPUT_BLOCK-ON: ${{ inputs.block-on }}
+        INPUT_APPROVE: ${{ inputs.approve }}
         INPUT_FAIL-ON-ERROR: ${{ inputs.fail-on-error }}
         INPUT_FAIL-ON-INCOMPLETE: ${{ inputs.fail-on-incomplete }}
         INPUT_MODEL: ${{ inputs.model }}

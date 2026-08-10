@@ -34,7 +34,8 @@ const CONFIG: Config = {
 	instructionsFile: '.github/review-instructions.md',
 	exclude: [...DEFAULT_EXCLUDE],
 	language: 'ja',
-	requestChangesOn: 'major',
+	blockOn: 'major',
+	approve: true,
 	failOnError: true,
 	failOnIncomplete: false,
 	model: 'claude-sonnet-5',
@@ -171,12 +172,12 @@ describe('runReview', () => {
 		expect(reviews[0]!.event).toBe('REQUEST_CHANGES');
 	});
 
-	test('閾値未満なら COMMENT で提出する', async () => {
+	test('閾値未満なら APPROVE で提出する', async () => {
 		const { deps, reviews } = setup({
 			outcomes: [{ ok: true, findings: [finding({ severity: 'minor' })] }],
 		});
 		await runReview(deps, CONFIG);
-		expect(reviews[0]!.event).toBe('COMMENT');
+		expect(reviews[0]!.event).toBe('APPROVE');
 	});
 
 	test('bot 自身の PR には REQUEST_CHANGES を出さない', async () => {
@@ -184,7 +185,7 @@ describe('runReview', () => {
 			pr: { authorLogin: 'github-actions[bot]' },
 			outcomes: [{ ok: true, findings: [finding({ severity: 'critical' })] }],
 		});
-		await runReview(deps, { ...CONFIG, requestChangesOn: 'critical' });
+		await runReview(deps, { ...CONFIG, blockOn: 'critical' });
 		expect(reviews[0]!.event).toBe('COMMENT');
 	});
 
@@ -303,5 +304,23 @@ describe('runReview', () => {
 		expect(result.counts.critical).toBe(1);
 		expect(result.counts.major).toBe(2);
 		expect(result.counts.minor).toBe(0);
+	});
+
+	test('新規指摘も判定の変化も無ければ Review を作らない', async () => {
+		const { deps, reviews } = setup({
+			outcomes: [{ ok: true, findings: [] }],
+			existingReviews: [
+				{ id: 1, body: `済\n${REVIEW_MARKER}`, state: 'APPROVED' },
+			],
+		});
+		const result = await runReview(deps, CONFIG);
+		expect(reviews).toHaveLength(0);
+		expect(result.event).toBe('NONE');
+	});
+
+	test('指摘が無ければ APPROVE を出す', async () => {
+		const { deps, reviews } = setup({ outcomes: [{ ok: true, findings: [] }] });
+		await runReview(deps, CONFIG);
+		expect(reviews[0]!.event).toBe('APPROVE');
 	});
 });

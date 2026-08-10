@@ -1,7 +1,4 @@
-import {
-	REQUEST_CHANGES_ON_VALUES,
-	type RequestChangesOn,
-} from './core/decision';
+import { BLOCK_ON_VALUES, type BlockOn } from './core/decision';
 import { DEFAULT_EXCLUDE } from './core/diff';
 import { type Language, LANGUAGES } from './core/i18n';
 import type { ParseResult } from './core/schema';
@@ -17,7 +14,8 @@ export interface Config {
 	instructionsFile: string;
 	exclude: string[];
 	language: Language;
-	requestChangesOn: RequestChangesOn;
+	blockOn: BlockOn;
+	approve: boolean;
 	failOnError: boolean;
 	failOnIncomplete: boolean;
 	model: string;
@@ -54,13 +52,7 @@ export function loadConfig(input: RawInputs): ParseResult<Config> {
 
 	const prNumber = int(input, 'pr-number', errors, { min: 1 });
 	const language = pick(input, 'language', LANGUAGES, 'en', errors);
-	const requestChangesOn = pick(
-		input,
-		'request-changes-on',
-		REQUEST_CHANGES_ON_VALUES,
-		'critical',
-		errors,
-	);
+	const blockOn = pick(input, 'block-on', BLOCK_ON_VALUES, 'major', errors);
 	const effort = pick(input, 'effort', EFFORTS, 'high', errors);
 	const maxRetries = int(input, 'max-retries', errors, { min: 1, fallback: 3 });
 	const timeoutMinutes = num(input, 'timeout-minutes', errors, {
@@ -91,7 +83,8 @@ export function loadConfig(input: RawInputs): ParseResult<Config> {
 				str(input, 'instructions-file') || '.github/review-instructions.md',
 			exclude: [...DEFAULT_EXCLUDE, ...lines(input, 'exclude')],
 			language,
-			requestChangesOn,
+			blockOn,
+			approve: bool(input, 'approve', true),
 			failOnError: bool(input, 'fail-on-error', true),
 			failOnIncomplete: bool(input, 'fail-on-incomplete', false),
 			model: str(input, 'model') || 'claude-sonnet-5',

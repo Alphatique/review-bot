@@ -23760,19 +23760,28 @@ function parseFindings(input) {
 }
 //#endregion
 //#region src/core/decision.ts
-const REQUEST_CHANGES_ON_VALUES = [
+const BLOCK_ON_VALUES = [
 	"none",
 	"critical",
 	"major",
 	"minor"
 ];
 function decideEvent(input) {
-	if (!input.canRequestChanges) return "COMMENT";
-	if (input.threshold === "none") return "COMMENT";
-	const threshold = input.threshold;
-	if (input.newFindings.some((f) => isAtLeastAsSevere(f.severity, threshold))) return "REQUEST_CHANGES";
-	return input.existing.some((e) => !e.isResolved && isAtLeastAsSevere(e.severity, threshold)) ? "REQUEST_CHANGES" : "COMMENT";
+	const blocking = input.blockOn !== "none" && input.outstanding.some((severity) => isAtLeastAsSevere(severity, input.blockOn));
+	let desired;
+	if (blocking) desired = "REQUEST_CHANGES";
+	else if (input.approve && !input.hasUntrackedFindings) desired = "APPROVE";
+	else desired = "COMMENT";
+	if (!input.canSubmitVerdict && desired !== "COMMENT") desired = "COMMENT";
+	if (desired === "COMMENT") return input.hasSomethingToReport ? "COMMENT" : "NONE";
+	const liveEquivalent = LIVE_STATE_BY_EVENT[desired];
+	if (input.liveVerdict?.state === liveEquivalent) return input.hasSomethingToReport ? "COMMENT" : "NONE";
+	return desired;
 }
+const LIVE_STATE_BY_EVENT = {
+	REQUEST_CHANGES: "CHANGES_REQUESTED",
+	APPROVE: "APPROVED"
+};
 //#endregion
 //#region node_modules/picomatch/lib/constants.js
 var require_constants = /* @__PURE__ */ __commonJSMin(((exports, module) => {
@@ -25831,7 +25840,7 @@ function loadConfig(input) {
 	if (!repo) errors.push("repo is required");
 	const prNumber = int(input, "pr-number", errors, { min: 1 });
 	const language = pick(input, "language", LANGUAGES, "en", errors);
-	const requestChangesOn = pick(input, "request-changes-on", REQUEST_CHANGES_ON_VALUES, "critical", errors);
+	const blockOn = pick(input, "block-on", BLOCK_ON_VALUES, "major", errors);
 	const effort = pick(input, "effort", EFFORTS, "high", errors);
 	const maxRetries = int(input, "max-retries", errors, {
 		min: 1,
@@ -25863,7 +25872,8 @@ function loadConfig(input) {
 			instructionsFile: str(input, "instructions-file") || ".github/review-instructions.md",
 			exclude: [...DEFAULT_EXCLUDE, ...lines(input, "exclude")],
 			language,
-			requestChangesOn,
+			blockOn,
+			approve: bool(input, "approve", true),
 			failOnError: bool(input, "fail-on-error", true),
 			failOnIncomplete: bool(input, "fail-on-incomplete", false),
 			model: str(input, "model") || "claude-sonnet-5",
@@ -26076,6 +26086,9 @@ function parseInlineMarker(body) {
 		key,
 		severity
 	};
+}
+function hasReviewMarker(body) {
+	return body.includes(REVIEW_MARKER);
 }
 //#endregion
 //#region src/io/github.ts
@@ -26323,6 +26336,24 @@ function sortBySeverity(findings) {
 	return [...findings].toSorted((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 }
 //#endregion
+//#region src/core/verdict.ts
+/**
+* 自分が出した Review のうち、GitHub がいま有効としている判定を返す。
+* reviews は古い順（GitHub の既定順）で渡すこと。
+*/
+function pickLiveVerdict(reviews) {
+	for (let i = reviews.length - 1; i >= 0; i -= 1) {
+		const review = reviews[i];
+		if (!hasReviewMarker(review.body)) continue;
+		if (review.state === "DISMISSED") return null;
+		if (review.state === "APPROVED" || review.state === "CHANGES_REQUESTED") return {
+			id: review.id,
+			state: review.state
+		};
+	}
+	return null;
+}
+//#endregion
 //#region src/orchestrate.ts
 const BOT_AUTHOR_SUFFIX = "[bot]";
 async function runReview(deps, config) {
@@ -26404,6 +26435,10 @@ async function runReview(deps, config) {
 		}
 		if (!outcome.ok) return failure(outcome.error);
 		const existing = await github.listThreads();
+		const liveVerdict = pickLiveVerdict(await github.listReviews().catch((error) => {
+			log(`could not list reviews: ${describe(error)}`);
+			return [];
+		}));
 		const { toPost } = dedupe(outcome.findings, existing);
 		const inline = [];
 		const posted = [];
@@ -26417,10 +26452,13 @@ async function runReview(deps, config) {
 			posted.push(finding);
 		} else unlocatable.push(finding);
 		const event = decideEvent({
-			newFindings: toPost,
-			existing,
-			threshold: config.requestChangesOn,
-			canRequestChanges: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX)
+			outstanding: [...existing.filter((t) => !t.isResolved).map((t) => t.severity), ...toPost.map((f) => f.severity)],
+			blockOn: config.blockOn,
+			approve: config.approve,
+			hasUntrackedFindings: false,
+			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
+			liveVerdict,
+			hasSomethingToReport: toPost.length > 0
 		});
 		const body = renderSummary({
 			lang: config.language,
@@ -26429,7 +26467,7 @@ async function runReview(deps, config) {
 			excludedFiles: analysis.excludedFiles,
 			oversizedFiles: analysis.oversizedFiles
 		});
-		await github.createReview({
+		if (event !== "NONE") await github.createReview({
 			body,
 			event,
 			commitId: pr.headSha,
@@ -26471,7 +26509,8 @@ const INPUT_KEYS = [
 	"instructions-file",
 	"exclude",
 	"language",
-	"request-changes-on",
+	"block-on",
+	"approve",
 	"fail-on-error",
 	"fail-on-incomplete",
 	"model",
