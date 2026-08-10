@@ -68,6 +68,7 @@ interface FakeOptions {
 	fileCommentFails?: boolean;
 	resolveFails?: boolean;
 	replyFails?: boolean;
+	getDiffFails?: boolean;
 }
 
 function setup(options: FakeOptions = {}) {
@@ -84,6 +85,7 @@ function setup(options: FakeOptions = {}) {
 		getPullRequest: async () => ({ ...PR, ...options.pr }),
 		getDiff: async (from, to) => {
 			diffRequests.push({ from, to });
+			if (options.getDiffFails) throw new Error('boom');
 			return options.diff ?? DIFF;
 		},
 		listThreads: async () => options.existing ?? [],
@@ -380,6 +382,20 @@ describe('runReview', () => {
 		expect(dismissals).toEqual([]);
 	});
 
+	test('差分取得に失敗しても自分の承認を取り下げる', async () => {
+		// getDiff / listThreads より前に liveVerdict を確定させておかないと、
+		// この時点で失敗したとき取り下げる根拠が無くなる。
+		const { deps, dismissals } = setup({
+			getDiffFails: true,
+			existingReviews: [
+				{ id: 7, body: `済\n${REVIEW_MARKER}`, state: 'APPROVED' },
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(dismissals).toHaveLength(1);
+		expect(dismissals[0]!.reviewId).toBe(7);
+	});
+
 	test('差分が空でもスレッドの現状から判定を出す', async () => {
 		const { deps, reviews, prompts } = setup({ diff: '' });
 		const result = await runReview(deps, CONFIG);
@@ -395,6 +411,15 @@ describe('runReview', () => {
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.event).toBe('REQUEST_CHANGES');
+	});
+
+	test('サイズ超過で全ファイルが除外されて差分が空でも APPROVE しない', async () => {
+		// diffMaxBytes を極端に小さくして、唯一の変更ファイルを丸ごと
+		// oversizedFiles に落とす。「読めなかった」だけであり、指摘が無いのとは違う。
+		const { deps, reviews } = setup();
+		const result = await runReview(deps, { ...CONFIG, diffMaxBytes: 10 });
+		expect(result.event).not.toBe('APPROVE');
+		expect(reviews.some(review => review.event === 'APPROVE')).toBe(false);
 	});
 
 	test('fork PR は失敗として扱う', async () => {

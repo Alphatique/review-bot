@@ -118,6 +118,16 @@ export async function runReview(
 	try {
 		log(`reviewing ${pr.baseSha}...${pr.headSha}`);
 
+		// listReviews は失敗を [] に握りつぶすので他より先に呼んでも安全。
+		// getDiff / listThreads がここより後で失敗しても、liveVerdict が
+		// 既に分かっていれば catch 側の failure() が承認を取り下げられる。
+		const reviews = await github.listReviews().catch(error => {
+			// 判定を出し直す側に倒れる。通知が増えるだけで安全側。
+			log(`could not list reviews: ${describe(error)}`);
+			return [];
+		});
+		liveVerdict = pickLiveVerdict(reviews);
+
 		const rawDiff = await github.getDiff(pr.baseSha, pr.headSha);
 		const analysis = analyzeDiff(rawDiff, {
 			exclude: config.exclude,
@@ -125,12 +135,6 @@ export async function runReview(
 		});
 
 		const existing = await github.listThreads();
-		const reviews = await github.listReviews().catch(error => {
-			// 判定を出し直す側に倒れる。通知が増えるだけで安全側。
-			log(`could not list reviews: ${describe(error)}`);
-			return [];
-		});
-		liveVerdict = pickLiveVerdict(reviews);
 
 		const inline: InlineCommentInput[] = [];
 		/** スレッドが立った指摘。 */
@@ -261,7 +265,13 @@ export async function runReview(
 			outstanding,
 			blockOn: config.blockOn,
 			approve: config.approve,
-			hasUntrackedFindings: dropped.length > 0 || untracked.length > 0,
+			// サイズ超過で読めなかったファイルも、承認の根拠にならない点は
+			// dropped / untracked と同じ。除外設定 (excludedFiles) は意図的に
+			// 読まないファイルなので含めない。
+			hasUntrackedFindings:
+				dropped.length > 0 ||
+				untracked.length > 0 ||
+				analysis.oversizedFiles.length > 0,
 			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
 			liveVerdict,
 			hasSomethingToReport:

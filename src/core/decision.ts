@@ -12,8 +12,11 @@ export interface DecisionInput {
 	blockOn: BlockOn;
 	approve: boolean;
 	/**
-	 * スレッドとして追跡できない指摘があるか。
-	 * true なら承認しない。追跡できない問題を残したまま緑にしない。
+	 * 承認の根拠にならない要素が今回の実行に含まれるか。
+	 * スレッドとして追跡できない指摘、投稿に失敗した指摘、サイズ超過で
+	 * レビューされなかったファイルのいずれかがあれば true。
+	 * true なら承認しない。追跡できない・レビューできなかった問題を
+	 * 残したまま緑にしない。
 	 */
 	hasUntrackedFindings: boolean;
 	/**

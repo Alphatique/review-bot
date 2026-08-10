@@ -26520,15 +26520,15 @@ async function runReview(deps, config) {
 	let liveVerdict = null;
 	try {
 		log(`reviewing ${pr.baseSha}...${pr.headSha}`);
+		liveVerdict = pickLiveVerdict(await github.listReviews().catch((error) => {
+			log(`could not list reviews: ${describe(error)}`);
+			return [];
+		}));
 		const analysis = analyzeDiff(await github.getDiff(pr.baseSha, pr.headSha), {
 			exclude: config.exclude,
 			maxBytes: config.diffMaxBytes
 		});
 		const existing = await github.listThreads();
-		liveVerdict = pickLiveVerdict(await github.listReviews().catch((error) => {
-			log(`could not list reviews: ${describe(error)}`);
-			return [];
-		}));
 		const inline = [];
 		/** スレッドが立った指摘。 */
 		const tracked = [];
@@ -26629,7 +26629,7 @@ async function runReview(deps, config) {
 			],
 			blockOn: config.blockOn,
 			approve: config.approve,
-			hasUntrackedFindings: dropped.length > 0 || untracked.length > 0,
+			hasUntrackedFindings: dropped.length > 0 || untracked.length > 0 || analysis.oversizedFiles.length > 0,
 			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
 			liveVerdict,
 			hasSomethingToReport: tracked.length > 0 || untracked.length > 0 || dropped.length > 0
