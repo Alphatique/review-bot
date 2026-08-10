@@ -12,6 +12,7 @@ import type { ReviewRecord } from '../src/core/verdict';
 import type { AgentOutcome } from '../src/io/agent';
 import type {
 	CreateReviewInput,
+	FileCommentInput,
 	GitHubClient,
 	PullRequestInfo,
 } from '../src/io/github';
@@ -63,6 +64,7 @@ interface FakeOptions {
 	existingReviews?: ReviewRecord[];
 	outcomes?: AgentOutcome[];
 	instructions?: string | null;
+	fileCommentFails?: boolean;
 }
 
 function setup(options: FakeOptions = {}) {
@@ -71,6 +73,7 @@ function setup(options: FakeOptions = {}) {
 	const diffRequests: { from: string; to: string }[] = [];
 	const outcomes = [...(options.outcomes ?? [])];
 	const dismissals: { reviewId: number; message: string }[] = [];
+	const fileComments: FileCommentInput[] = [];
 
 	const github: GitHubClient = {
 		getPullRequest: async () => ({ ...PR, ...options.pr }),
@@ -81,6 +84,10 @@ function setup(options: FakeOptions = {}) {
 		listThreads: async () => options.existing ?? [],
 		createReview: async input => {
 			reviews.push(input);
+		},
+		createFileComment: async input => {
+			if (options.fileCommentFails) throw new Error('boom');
+			fileComments.push(input);
 		},
 		listReviews: async () => options.existingReviews ?? [],
 		dismissReview: async (reviewId, message) => {
@@ -98,7 +105,7 @@ function setup(options: FakeOptions = {}) {
 		log: () => {},
 	};
 
-	return { deps, reviews, prompts, diffRequests, dismissals };
+	return { deps, reviews, prompts, diffRequests, dismissals, fileComments };
 }
 
 function finding(overrides: Partial<Finding> = {}): Finding {
@@ -146,22 +153,56 @@ describe('runReview', () => {
 		expect(parseInlineMarker(reviews[0]!.comments[0]!.body)).not.toBeNull();
 	});
 
-	test('コメント可能行でない指摘はサマリへ落とす', async () => {
-		const { deps, reviews } = setup({
+	test('コメント可能行でない指摘をファイル単位コメントとして投稿する', async () => {
+		const { deps, reviews, fileComments } = setup({
 			outcomes: [{ ok: true, findings: [finding({ line: 999 })] }],
 		});
 		await runReview(deps, CONFIG);
+		expect(fileComments).toHaveLength(1);
+		expect(fileComments[0]!.path).toBe('src/a.ts');
 		expect(reviews[0]!.comments).toHaveLength(0);
-		expect(reviews[0]!.body).toContain('未使用の変数');
 	});
 
-	test('line が null の指摘はサマリへ落とす', async () => {
-		const { deps, reviews } = setup({
+	test('line が null の指摘もファイル単位コメントとして投稿する', async () => {
+		const { deps, fileComments } = setup({
 			outcomes: [{ ok: true, findings: [finding({ line: null })] }],
 		});
 		await runReview(deps, CONFIG);
-		expect(reviews[0]!.comments).toHaveLength(0);
-		expect(reviews[0]!.body).toContain('未使用の変数');
+		expect(fileComments).toHaveLength(1);
+	});
+
+	test('差分に無いファイルへの指摘は破棄して APPROVE しない', async () => {
+		const { deps, reviews, fileComments } = setup({
+			outcomes: [
+				{ ok: true, findings: [finding({ file: 'src/other.ts', line: null })] },
+			],
+		});
+		await runReview(deps, CONFIG);
+		expect(fileComments).toHaveLength(0);
+		expect(reviews[0]!.event).toBe('COMMENT');
+		expect(reviews[0]!.body).toContain('src/other.ts');
+	});
+
+	test('ファイル単位コメントの投稿に失敗したら APPROVE しない', async () => {
+		// severity を blockOn 未満にして、REQUEST_CHANGES への昇格ではなく
+		// 「投稿に失敗した」こと自体が APPROVE を止めることを検証する。
+		const { deps, reviews } = setup({
+			outcomes: [
+				{ ok: true, findings: [finding({ line: 999, severity: 'minor' })] },
+			],
+			fileCommentFails: true,
+		});
+		await runReview(deps, CONFIG);
+		expect(reviews[0]!.event).toBe('COMMENT');
+		expect(reviews[0]!.body).toContain('src/a.ts');
+	});
+
+	test('Review 本文に指摘の body を複製しない', async () => {
+		const { deps, reviews } = setup({
+			outcomes: [{ ok: true, findings: [finding({ line: 2 })] }],
+		});
+		await runReview(deps, CONFIG);
+		expect(reviews[0]!.body).not.toContain('y が使われていない');
 	});
 
 	test('閾値以上の指摘があれば REQUEST_CHANGES で提出する', async () => {

@@ -4,9 +4,9 @@ import { dedupe, type KeyedFinding } from './core/dedupe';
 import { analyzeDiff, isCommentable } from './core/diff';
 import { buildPrompt, DEFAULT_INSTRUCTIONS } from './core/prompt';
 import {
-	renderFailureSummary,
+	renderFailureBody,
 	renderInlineComment,
-	renderSummary,
+	renderReviewBody,
 } from './core/render';
 import type { Severity } from './core/schema';
 import { pickLiveVerdict } from './core/verdict';
@@ -65,7 +65,7 @@ export async function runReview(
 		log(`review failed: ${error}`);
 		try {
 			await github.createReview({
-				body: renderFailureSummary(error, config.language),
+				body: renderFailureBody(error, config.language),
 				event: 'COMMENT',
 				commitId: await safeHeadSha(github),
 				comments: [],
@@ -148,45 +148,74 @@ export async function runReview(
 		const { toPost } = dedupe(outcome.findings, existing);
 
 		const inline: InlineCommentInput[] = [];
-		const posted: KeyedFinding[] = [];
-		const unlocatable: KeyedFinding[] = [];
+		/** スレッドが立った指摘。 */
+		const tracked: KeyedFinding[] = [];
+		/** 投稿に失敗し、スレッドにならなかった指摘。 */
+		const untracked: KeyedFinding[] = [];
+		/** 差分外を指していて破棄した指摘。 */
+		const dropped: KeyedFinding[] = [];
+
 		for (const finding of toPost) {
+			if (!analysis.commentableLines.has(finding.file)) {
+				// 差分に無いファイルへの指摘。モデルが差分の外を見て組み立てたか、
+				// パスを誤ったかのどちらかで、どちらも承認の根拠にならない。
+				dropped.push(finding);
+				continue;
+			}
+
+			const body = renderInlineComment(finding, config.language);
 			if (
 				finding.line !== null &&
 				isCommentable(analysis, finding.file, finding.line)
 			) {
-				inline.push({
+				inline.push({ path: finding.file, line: finding.line, body });
+				tracked.push(finding);
+				continue;
+			}
+
+			// 判定より前に投稿する。投稿の失敗が承認の可否に効くため、
+			// 判定の後だと fail closed にできない。
+			try {
+				await github.createFileComment({
 					path: finding.file,
-					line: finding.line,
-					body: renderInlineComment(finding, config.language),
+					body,
+					commitId: pr.headSha,
 				});
-				posted.push(finding);
-			} else {
-				unlocatable.push(finding);
+				tracked.push(finding);
+			} catch (error) {
+				log(
+					`could not post file comment on ${finding.file}: ${describe(error)}`,
+				);
+				untracked.push(finding);
 			}
 		}
 
 		const outstanding: Severity[] = [
 			...existing.filter(t => !t.isResolved).map(t => t.severity),
-			...toPost.map(f => f.severity),
+			...tracked.map(f => f.severity),
+			// 投稿できなくても問題は実在するので未解決として数える。
+			...untracked.map(f => f.severity),
 		];
 
 		const event = decideEvent({
 			outstanding,
 			blockOn: config.blockOn,
 			approve: config.approve,
-			hasUntrackedFindings: false,
+			hasUntrackedFindings: dropped.length > 0 || untracked.length > 0,
 			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
 			liveVerdict,
-			hasSomethingToReport: toPost.length > 0,
+			hasSomethingToReport:
+				tracked.length > 0 || untracked.length > 0 || dropped.length > 0,
 		});
 
-		const body = renderSummary({
+		const body = renderReviewBody({
 			lang: config.language,
-			posted,
-			unlocatable,
+			posted: tracked,
+			droppedFiles: dropped.map(f => f.file),
+			failedComments: untracked.map(f => f.file),
 			excludedFiles: analysis.excludedFiles,
 			oversizedFiles: analysis.oversizedFiles,
+			resolvedCount: 0,
 		});
 
 		if (event !== 'NONE') {
@@ -199,17 +228,17 @@ export async function runReview(
 		}
 
 		const counts = emptyCounts();
-		for (const finding of toPost) counts[finding.severity] += 1;
+		for (const finding of tracked) counts[finding.severity] += 1;
 
 		log(
-			`posted ${inline.length} inline / ${unlocatable.length} summary-only, event=${event}`,
+			`tracked ${tracked.length} / untracked ${untracked.length} / dropped ${dropped.length}, event=${event}`,
 		);
 
 		return {
 			status: 'success',
 			event,
 			counts,
-			findingsCount: toPost.length,
+			findingsCount: tracked.length,
 			incompleteFiles: analysis.oversizedFiles.length,
 			error: null,
 		};

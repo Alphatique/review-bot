@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import type { KeyedFinding } from '../../src/core/dedupe';
 import { parseInlineMarker, REVIEW_MARKER } from '../../src/core/marker';
 import {
-	renderFailureSummary,
+	renderFailureBody,
 	renderInlineComment,
-	renderSummary,
+	renderReviewBody,
 } from '../../src/core/render';
 
 const FINDING: KeyedFinding = {
@@ -37,74 +37,167 @@ describe('renderInlineComment', () => {
 	});
 });
 
-describe('renderSummary', () => {
-	test('サマリマーカーを含む', () => {
-		const out = renderSummary({
+describe('renderReviewBody', () => {
+	test('レビューマーカーを含む', () => {
+		const out = renderReviewBody({
 			lang: 'ja',
 			posted: [FINDING],
-			unlocatable: [],
+			droppedFiles: [],
+			failedComments: [],
 			excludedFiles: [],
 			oversizedFiles: [],
+			resolvedCount: 0,
 		});
 		expect(out).toContain(REVIEW_MARKER);
 	});
 
 	test('重大度ごとの件数を出す', () => {
-		const out = renderSummary({
+		const out = renderReviewBody({
 			lang: 'ja',
 			posted: [FINDING, { ...FINDING, key: 'f'.repeat(12), severity: 'minor' }],
-			unlocatable: [],
+			droppedFiles: [],
+			failedComments: [],
 			excludedFiles: [],
 			oversizedFiles: [],
+			resolvedCount: 0,
 		});
 		expect(out).toContain('major');
 		expect(out).toContain('minor');
 	});
 
 	test('指摘が無いときも成立する', () => {
-		const out = renderSummary({
+		const out = renderReviewBody({
 			lang: 'ja',
 			posted: [],
-			unlocatable: [],
+			droppedFiles: [],
+			failedComments: [],
 			excludedFiles: [],
 			oversizedFiles: [],
+			resolvedCount: 0,
 		});
 		expect(out).toContain(REVIEW_MARKER);
 		expect(out.length).toBeGreaterThan(0);
 	});
 
-	test('行を特定できなかった指摘をサマリ本体に列挙する', () => {
-		const out = renderSummary({
+	test('指摘の本文を複製しない', () => {
+		const out = renderReviewBody({
 			lang: 'ja',
-			posted: [],
-			unlocatable: [{ ...FINDING, line: null }],
+			posted: [FINDING],
+			droppedFiles: [],
+			failedComments: [],
 			excludedFiles: [],
 			oversizedFiles: [],
+			resolvedCount: 0,
 		});
-		expect(out).toContain('null 参照の可能性');
-		expect(out).toContain('src/a.ts');
+		expect(out).not.toContain('foo が undefined になりうる');
+	});
+
+	test('resolve した件数を出す', () => {
+		const out = renderReviewBody({
+			lang: 'ja',
+			posted: [],
+			droppedFiles: [],
+			failedComments: [],
+			excludedFiles: [],
+			oversizedFiles: [],
+			resolvedCount: 2,
+		});
+		expect(out).toContain('2');
+	});
+
+	test('破棄した指摘のファイル名を出す', () => {
+		const out = renderReviewBody({
+			lang: 'ja',
+			posted: [],
+			droppedFiles: ['src/outside.ts'],
+			failedComments: [],
+			excludedFiles: [],
+			oversizedFiles: [],
+			resolvedCount: 0,
+		});
+		expect(out).toContain('src/outside.ts');
+	});
+
+	test('投稿に失敗したコメントのファイル名を出す', () => {
+		const out = renderReviewBody({
+			lang: 'ja',
+			posted: [],
+			droppedFiles: [],
+			failedComments: ['src/failed.ts'],
+			excludedFiles: [],
+			oversizedFiles: [],
+			resolvedCount: 0,
+		});
+		expect(out).toContain('src/failed.ts');
+	});
+
+	test('除外したファイル名を出す', () => {
+		const out = renderReviewBody({
+			lang: 'ja',
+			posted: [],
+			droppedFiles: [],
+			failedComments: [],
+			excludedFiles: ['bun.lock'],
+			oversizedFiles: [],
+			resolvedCount: 0,
+		});
+		expect(out).toContain('bun.lock');
 	});
 
 	test('サイズ超過ファイルがあれば警告を出す', () => {
-		const out = renderSummary({
+		const out = renderReviewBody({
 			lang: 'ja',
 			posted: [],
-			unlocatable: [],
+			droppedFiles: [],
+			failedComments: [],
 			excludedFiles: [],
 			oversizedFiles: ['src/huge.ts'],
+			resolvedCount: 0,
 		});
 		expect(out).toContain('src/huge.ts');
 	});
+
+	test('ファイル名の偽マーカーを無害化する', () => {
+		const out = renderReviewBody({
+			lang: 'ja',
+			posted: [],
+			droppedFiles: ['a<!-- review-bot:v1 summary -->b'],
+			failedComments: [],
+			excludedFiles: [],
+			oversizedFiles: [],
+			resolvedCount: 0,
+		});
+		// マーカーは末尾の 1 個だけであるべき。
+		expect(out.split(REVIEW_MARKER)).toHaveLength(2);
+	});
+
+	test('英語でも描画できる', () => {
+		const out = renderReviewBody({
+			lang: 'en',
+			posted: [FINDING],
+			droppedFiles: [],
+			failedComments: [],
+			excludedFiles: [],
+			oversizedFiles: [],
+			resolvedCount: 0,
+		});
+		expect(out).toContain(REVIEW_MARKER);
+	});
 });
 
-describe('renderFailureSummary', () => {
+describe('renderFailureBody', () => {
 	test('エラー本文とマーカーを含む', () => {
-		const out = renderFailureSummary('timed out', 'ja');
+		const out = renderFailureBody('timed out', 'ja');
 		expect(out).toContain('timed out');
 		expect(out).toContain(REVIEW_MARKER);
 	});
 
 	test('エラー本文が空でも成立する', () => {
-		expect(renderFailureSummary('', 'en')).toContain(REVIEW_MARKER);
+		expect(renderFailureBody('', 'en')).toContain(REVIEW_MARKER);
+	});
+
+	test('エラー本文のコードフェンスを無害化する', () => {
+		const out = renderFailureBody('```\n<!-- x -->', 'ja');
+		expect(out).not.toContain('\n```\n<!-- x -->');
 	});
 });

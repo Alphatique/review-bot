@@ -1,7 +1,7 @@
 import type { KeyedFinding } from './dedupe';
 import { type Language, messages } from './i18n';
 import { buildInlineMarker, REVIEW_MARKER } from './marker';
-import { SEVERITIES, SEVERITY_ORDER, type Severity } from './schema';
+import { SEVERITIES, type Severity } from './schema';
 
 const SEVERITY_EMOJI: Record<Severity, string> = {
 	critical: '🔴',
@@ -22,58 +22,53 @@ export function renderInlineComment(
 	return `${head}\n\n${finding.body.trim()}\n\n${marker}\n`;
 }
 
-export interface SummaryInput {
+export interface ReviewBodyInput {
 	lang: Language;
-	/** インラインコメントとして投稿する指摘。 */
+	/** スレッドとして投稿できた指摘。 */
 	posted: readonly KeyedFinding[];
-	/** 行を特定できずサマリに落とした指摘。 */
-	unlocatable: readonly KeyedFinding[];
+	/** 差分外を指していて破棄した指摘のファイル。 */
+	droppedFiles: readonly string[];
+	/** コメントの投稿に失敗した指摘のファイル。 */
+	failedComments: readonly string[];
 	excludedFiles: readonly string[];
 	oversizedFiles: readonly string[];
+	resolvedCount: number;
 }
 
-export function renderSummary(input: SummaryInput): string {
+export function renderReviewBody(input: ReviewBodyInput): string {
 	const m = messages(input.lang);
-	const lines: string[] = [m.summaryHeading, ''];
+	const lines: string[] = [m.reviewHeading, ''];
 
-	const total = input.posted.length + input.unlocatable.length;
-	if (total === 0) {
-		lines.push(m.noFindings, '');
-	} else {
-		lines.push(m.findingsCount(total), '');
-		lines.push(renderCounts([...input.posted, ...input.unlocatable]), '');
+	if (input.posted.length === 0) lines.push(m.noFindings, '');
+	else {
+		lines.push(m.findingsCount(input.posted.length), '');
+		lines.push(renderCounts(input.posted), '');
 	}
 
-	if (input.unlocatable.length > 0) {
-		lines.push(m.unlocatableHeading, '', m.unlocatableNote, '');
-		for (const finding of sortBySeverity(input.unlocatable)) {
-			const where =
-				finding.line === null
-					? finding.file
-					: `${finding.file}:${finding.line}`;
-			lines.push(
-				`- ${SEVERITY_EMOJI[finding.severity]} **${finding.severity}** \`${where}\` — ${finding.title}`,
-				`  ${finding.body.trim().replace(/\n/g, '\n  ')}`,
-				'',
-			);
-		}
+	if (input.resolvedCount > 0) {
+		lines.push(m.resolvedCount(input.resolvedCount), '');
 	}
-
+	if (input.droppedFiles.length > 0) {
+		lines.push(m.droppedNote(input.droppedFiles.map(sanitizePath)), '');
+	}
+	if (input.failedComments.length > 0) {
+		lines.push(m.commentFailedNote(input.failedComments.map(sanitizePath)), '');
+	}
+	if (input.excludedFiles.length > 0) {
+		lines.push(m.excludedNote(input.excludedFiles.map(sanitizePath)), '');
+	}
 	if (input.oversizedFiles.length > 0) {
-		lines.push(m.oversizedWarning(input.oversizedFiles), '');
+		lines.push(m.oversizedWarning(input.oversizedFiles.map(sanitizePath)), '');
 	}
 
 	lines.push(REVIEW_MARKER);
 	return `${lines.join('\n').trimEnd()}\n`;
 }
 
-export function renderFailureSummary(
-	errorText: string,
-	lang: Language,
-): string {
+export function renderFailureBody(errorText: string, lang: Language): string {
 	const m = messages(lang);
 	return `${[
-		m.failureHeading,
+		m.reviewHeading,
 		'',
 		m.failureBody,
 		'',
@@ -81,7 +76,7 @@ export function renderFailureSummary(
 		`<summary>${m.errorDetails}</summary>`,
 		'',
 		'```',
-		errorText.trim() || '(no details)',
+		sanitizeFenced(errorText.trim()) || '(no details)',
 		'```',
 		'',
 		'</details>',
@@ -101,8 +96,26 @@ function renderCounts(findings: readonly KeyedFinding[]): string {
 	return parts.join(' / ');
 }
 
-function sortBySeverity(findings: readonly KeyedFinding[]): KeyedFinding[] {
-	return [...findings].toSorted(
-		(a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity],
-	);
+/**
+ * Review 本文に到達する文字列はすべてシリアライズ形式への入力である。
+ * `<` と `>` を実体参照にすればコメント区切りが成立しなくなり、
+ * 偽マーカーを本文に注入できなくなる。表示は変わらない。
+ */
+function sanitizeInline(text: string): string {
+	return text
+		.replace(/\s+/gu, ' ')
+		.replaceAll('&', '&amp;')
+		.replaceAll('<', '&lt;')
+		.replaceAll('>', '&gt;')
+		.trim();
+}
+
+/** コードスパンで囲む値（ファイルパス）用。バックティックも潰す。 */
+function sanitizePath(text: string): string {
+	return sanitizeInline(text).replaceAll('`', '');
+}
+
+/** フェンス内に置くエラー本文用。改行は情報なので保つ。 */
+function sanitizeFenced(text: string): string {
+	return text.replaceAll('<', '&lt;').replaceAll('```', '` ` `');
 }

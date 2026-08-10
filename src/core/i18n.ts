@@ -2,49 +2,54 @@ export const LANGUAGES = ['en', 'ja'] as const;
 export type Language = (typeof LANGUAGES)[number];
 
 export interface Messages {
-	summaryHeading: string;
+	reviewHeading: string;
 	noFindings: string;
 	findingsCount: (n: number) => string;
-	unlocatableHeading: string;
-	unlocatableNote: string;
+	resolvedCount: (n: number) => string;
+	droppedNote: (files: readonly string[]) => string;
+	commentFailedNote: (files: readonly string[]) => string;
+	excludedNote: (files: readonly string[]) => string;
 	oversizedWarning: (files: readonly string[]) => string;
-	failureHeading: string;
 	failureBody: string;
 	errorDetails: string;
-	instructionSource: string;
 }
 
+const list = (files: readonly string[]): string =>
+	files.map(file => `\`${file}\``).join(', ');
+
 const EN: Messages = {
-	summaryHeading: '## 🤖 Code Review',
+	reviewHeading: '## 🤖 Code Review',
 	noFindings: 'No new findings.',
-	findingsCount: n => `${n} new finding${n === 1 ? '' : 's'} posted inline.`,
-	unlocatableHeading: '### Findings without a diff location',
-	unlocatableNote:
-		'These could not be anchored to a line in the diff, so they are listed here.',
+	findingsCount: n => `${n} new finding${n === 1 ? '' : 's'} posted.`,
+	resolvedCount: n =>
+		`${n} finding${n === 1 ? '' : 's'} resolved automatically.`,
+	droppedNote: files =>
+		`> ⚠️ Findings pointing outside this diff were discarded and **not** reported: ${list(files)}`,
+	commentFailedNote: files =>
+		`> ⚠️ Some findings could not be posted as comments and are **not tracked**: ${list(files)}`,
+	excludedNote: files => `Excluded from review: ${list(files)}`,
 	oversizedWarning: files =>
-		`> ⚠️ ${files.length} file(s) were skipped because the diff exceeded the size limit and were **not reviewed**: ${files.map(f => `\`${f}\``).join(', ')}`,
-	failureHeading: '## 🤖 Code Review',
+		`> ⚠️ ${files.length} file(s) were skipped because the diff exceeded the size limit and were **not reviewed**: ${list(files)}`,
 	failureBody:
 		'⚠️ The automated review could not be completed. Re-run the workflow or check the job logs.',
 	errorDetails: 'Error details',
-	instructionSource: 'Review instructions',
 };
 
 const JA: Messages = {
-	summaryHeading: '## 🤖 コードレビュー',
+	reviewHeading: '## 🤖 コードレビュー',
 	noFindings: '新規の指摘はありません。',
-	findingsCount: n =>
-		`${n} 件の新規指摘をインラインコメントとして投稿しました。`,
-	unlocatableHeading: '### 行を特定できなかった指摘',
-	unlocatableNote:
-		'差分内の行に紐づけられなかったため、ここにまとめて記載します。',
+	findingsCount: n => `${n} 件の新規指摘を投稿しました。`,
+	resolvedCount: n => `${n} 件の指摘を自動で解決済みにしました。`,
+	droppedNote: files =>
+		`> ⚠️ 差分に含まれないファイルへの指摘を破棄しました（**報告していません**）: ${list(files)}`,
+	commentFailedNote: files =>
+		`> ⚠️ コメントとして投稿できなかった指摘があります（**追跡されません**）: ${list(files)}`,
+	excludedNote: files => `レビュー対象から除外: ${list(files)}`,
 	oversizedWarning: files =>
-		`> ⚠️ 差分がサイズ上限を超えたため ${files.length} 件のファイルを**レビューしていません**: ${files.map(f => `\`${f}\``).join(', ')}`,
-	failureHeading: '## 🤖 コードレビュー',
+		`> ⚠️ 差分がサイズ上限を超えたため ${files.length} 件のファイルを**レビューしていません**: ${list(files)}`,
 	failureBody:
 		'⚠️ 自動レビューを完了できませんでした。ワークフローを再実行するか、ジョブのログを確認してください。',
 	errorDetails: 'エラー概要',
-	instructionSource: 'レビュー観点',
 };
 
 export function messages(lang: Language): Messages {

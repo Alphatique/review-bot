@@ -25786,29 +25786,30 @@ function collectCommentableLines(chunkText) {
 //#endregion
 //#region src/core/i18n.ts
 const LANGUAGES = ["en", "ja"];
+const list = (files) => files.map((file) => `\`${file}\``).join(", ");
 const EN = {
-	summaryHeading: "## 🤖 Code Review",
+	reviewHeading: "## 🤖 Code Review",
 	noFindings: "No new findings.",
-	findingsCount: (n) => `${n} new finding${n === 1 ? "" : "s"} posted inline.`,
-	unlocatableHeading: "### Findings without a diff location",
-	unlocatableNote: "These could not be anchored to a line in the diff, so they are listed here.",
-	oversizedWarning: (files) => `> ⚠️ ${files.length} file(s) were skipped because the diff exceeded the size limit and were **not reviewed**: ${files.map((f) => `\`${f}\``).join(", ")}`,
-	failureHeading: "## 🤖 Code Review",
+	findingsCount: (n) => `${n} new finding${n === 1 ? "" : "s"} posted.`,
+	resolvedCount: (n) => `${n} finding${n === 1 ? "" : "s"} resolved automatically.`,
+	droppedNote: (files) => `> ⚠️ Findings pointing outside this diff were discarded and **not** reported: ${list(files)}`,
+	commentFailedNote: (files) => `> ⚠️ Some findings could not be posted as comments and are **not tracked**: ${list(files)}`,
+	excludedNote: (files) => `Excluded from review: ${list(files)}`,
+	oversizedWarning: (files) => `> ⚠️ ${files.length} file(s) were skipped because the diff exceeded the size limit and were **not reviewed**: ${list(files)}`,
 	failureBody: "⚠️ The automated review could not be completed. Re-run the workflow or check the job logs.",
-	errorDetails: "Error details",
-	instructionSource: "Review instructions"
+	errorDetails: "Error details"
 };
 const JA = {
-	summaryHeading: "## 🤖 コードレビュー",
+	reviewHeading: "## 🤖 コードレビュー",
 	noFindings: "新規の指摘はありません。",
-	findingsCount: (n) => `${n} 件の新規指摘をインラインコメントとして投稿しました。`,
-	unlocatableHeading: "### 行を特定できなかった指摘",
-	unlocatableNote: "差分内の行に紐づけられなかったため、ここにまとめて記載します。",
-	oversizedWarning: (files) => `> ⚠️ 差分がサイズ上限を超えたため ${files.length} 件のファイルを**レビューしていません**: ${files.map((f) => `\`${f}\``).join(", ")}`,
-	failureHeading: "## 🤖 コードレビュー",
+	findingsCount: (n) => `${n} 件の新規指摘を投稿しました。`,
+	resolvedCount: (n) => `${n} 件の指摘を自動で解決済みにしました。`,
+	droppedNote: (files) => `> ⚠️ 差分に含まれないファイルへの指摘を破棄しました（**報告していません**）: ${list(files)}`,
+	commentFailedNote: (files) => `> ⚠️ コメントとして投稿できなかった指摘があります（**追跡されません**）: ${list(files)}`,
+	excludedNote: (files) => `レビュー対象から除外: ${list(files)}`,
+	oversizedWarning: (files) => `> ⚠️ 差分がサイズ上限を超えたため ${files.length} 件のファイルを**レビューしていません**: ${list(files)}`,
 	failureBody: "⚠️ 自動レビューを完了できませんでした。ワークフローを再実行するか、ジョブのログを確認してください。",
-	errorDetails: "エラー概要",
-	instructionSource: "レビュー観点"
+	errorDetails: "エラー概要"
 };
 function messages(lang) {
 	return lang === "ja" ? JA : EN;
@@ -26186,6 +26187,17 @@ function createGitHubClient(options) {
 				}))
 			});
 		},
+		async createFileComment(input) {
+			await octokit.rest.pulls.createReviewComment({
+				owner,
+				repo,
+				pull_number: prNumber,
+				commit_id: input.commitId,
+				path: input.path,
+				body: input.body,
+				subject_type: "file"
+			});
+		},
 		async listReviews() {
 			return (await octokit.paginate(octokit.rest.pulls.listReviews, {
 				owner,
@@ -26285,30 +26297,26 @@ function renderInlineComment(finding, _lang) {
 	const marker = buildInlineMarker(finding.key, finding.severity);
 	return `${head}\n\n${finding.body.trim()}\n\n${marker}\n`;
 }
-function renderSummary(input) {
+function renderReviewBody(input) {
 	const m = messages(input.lang);
-	const lines = [m.summaryHeading, ""];
-	const total = input.posted.length + input.unlocatable.length;
-	if (total === 0) lines.push(m.noFindings, "");
+	const lines = [m.reviewHeading, ""];
+	if (input.posted.length === 0) lines.push(m.noFindings, "");
 	else {
-		lines.push(m.findingsCount(total), "");
-		lines.push(renderCounts([...input.posted, ...input.unlocatable]), "");
+		lines.push(m.findingsCount(input.posted.length), "");
+		lines.push(renderCounts(input.posted), "");
 	}
-	if (input.unlocatable.length > 0) {
-		lines.push(m.unlocatableHeading, "", m.unlocatableNote, "");
-		for (const finding of sortBySeverity(input.unlocatable)) {
-			const where = finding.line === null ? finding.file : `${finding.file}:${finding.line}`;
-			lines.push(`- ${SEVERITY_EMOJI[finding.severity]} **${finding.severity}** \`${where}\` — ${finding.title}`, `  ${finding.body.trim().replace(/\n/g, "\n  ")}`, "");
-		}
-	}
-	if (input.oversizedFiles.length > 0) lines.push(m.oversizedWarning(input.oversizedFiles), "");
+	if (input.resolvedCount > 0) lines.push(m.resolvedCount(input.resolvedCount), "");
+	if (input.droppedFiles.length > 0) lines.push(m.droppedNote(input.droppedFiles.map(sanitizePath)), "");
+	if (input.failedComments.length > 0) lines.push(m.commentFailedNote(input.failedComments.map(sanitizePath)), "");
+	if (input.excludedFiles.length > 0) lines.push(m.excludedNote(input.excludedFiles.map(sanitizePath)), "");
+	if (input.oversizedFiles.length > 0) lines.push(m.oversizedWarning(input.oversizedFiles.map(sanitizePath)), "");
 	lines.push(REVIEW_MARKER);
 	return `${lines.join("\n").trimEnd()}\n`;
 }
-function renderFailureSummary(errorText, lang) {
+function renderFailureBody(errorText, lang) {
 	const m = messages(lang);
 	return `${[
-		m.failureHeading,
+		m.reviewHeading,
 		"",
 		m.failureBody,
 		"",
@@ -26316,7 +26324,7 @@ function renderFailureSummary(errorText, lang) {
 		`<summary>${m.errorDetails}</summary>`,
 		"",
 		"```",
-		errorText.trim() || "(no details)",
+		sanitizeFenced(errorText.trim()) || "(no details)",
 		"```",
 		"",
 		"</details>",
@@ -26332,8 +26340,21 @@ function renderCounts(findings) {
 	}
 	return parts.join(" / ");
 }
-function sortBySeverity(findings) {
-	return [...findings].toSorted((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+/**
+* Review 本文に到達する文字列はすべてシリアライズ形式への入力である。
+* `<` と `>` を実体参照にすればコメント区切りが成立しなくなり、
+* 偽マーカーを本文に注入できなくなる。表示は変わらない。
+*/
+function sanitizeInline(text) {
+	return text.replace(/\s+/gu, " ").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").trim();
+}
+/** コードスパンで囲む値（ファイルパス）用。バックティックも潰す。 */
+function sanitizePath(text) {
+	return sanitizeInline(text).replaceAll("`", "");
+}
+/** フェンス内に置くエラー本文用。改行は情報なので保つ。 */
+function sanitizeFenced(text) {
+	return text.replaceAll("<", "&lt;").replaceAll("```", "` ` `");
 }
 //#endregion
 //#region src/core/verdict.ts
@@ -26375,7 +26396,7 @@ async function runReview(deps, config) {
 		log(`review failed: ${error}`);
 		try {
 			await github.createReview({
-				body: renderFailureSummary(error, config.language),
+				body: renderFailureBody(error, config.language),
 				event: "COMMENT",
 				commitId: await safeHeadSha(github),
 				comments: []
@@ -26441,31 +26462,60 @@ async function runReview(deps, config) {
 		}));
 		const { toPost } = dedupe(outcome.findings, existing);
 		const inline = [];
-		const posted = [];
-		const unlocatable = [];
-		for (const finding of toPost) if (finding.line !== null && isCommentable(analysis, finding.file, finding.line)) {
-			inline.push({
-				path: finding.file,
-				line: finding.line,
-				body: renderInlineComment(finding, config.language)
-			});
-			posted.push(finding);
-		} else unlocatable.push(finding);
+		/** スレッドが立った指摘。 */
+		const tracked = [];
+		/** 投稿に失敗し、スレッドにならなかった指摘。 */
+		const untracked = [];
+		/** 差分外を指していて破棄した指摘。 */
+		const dropped = [];
+		for (const finding of toPost) {
+			if (!analysis.commentableLines.has(finding.file)) {
+				dropped.push(finding);
+				continue;
+			}
+			const body = renderInlineComment(finding, config.language);
+			if (finding.line !== null && isCommentable(analysis, finding.file, finding.line)) {
+				inline.push({
+					path: finding.file,
+					line: finding.line,
+					body
+				});
+				tracked.push(finding);
+				continue;
+			}
+			try {
+				await github.createFileComment({
+					path: finding.file,
+					body,
+					commitId: pr.headSha
+				});
+				tracked.push(finding);
+			} catch (error) {
+				log(`could not post file comment on ${finding.file}: ${describe(error)}`);
+				untracked.push(finding);
+			}
+		}
 		const event = decideEvent({
-			outstanding: [...existing.filter((t) => !t.isResolved).map((t) => t.severity), ...toPost.map((f) => f.severity)],
+			outstanding: [
+				...existing.filter((t) => !t.isResolved).map((t) => t.severity),
+				...tracked.map((f) => f.severity),
+				...untracked.map((f) => f.severity)
+			],
 			blockOn: config.blockOn,
 			approve: config.approve,
-			hasUntrackedFindings: false,
+			hasUntrackedFindings: dropped.length > 0 || untracked.length > 0,
 			canSubmitVerdict: !pr.authorLogin.endsWith(BOT_AUTHOR_SUFFIX),
 			liveVerdict,
-			hasSomethingToReport: toPost.length > 0
+			hasSomethingToReport: tracked.length > 0 || untracked.length > 0 || dropped.length > 0
 		});
-		const body = renderSummary({
+		const body = renderReviewBody({
 			lang: config.language,
-			posted,
-			unlocatable,
+			posted: tracked,
+			droppedFiles: dropped.map((f) => f.file),
+			failedComments: untracked.map((f) => f.file),
 			excludedFiles: analysis.excludedFiles,
-			oversizedFiles: analysis.oversizedFiles
+			oversizedFiles: analysis.oversizedFiles,
+			resolvedCount: 0
 		});
 		if (event !== "NONE") await github.createReview({
 			body,
@@ -26474,13 +26524,13 @@ async function runReview(deps, config) {
 			comments: inline
 		});
 		const counts = emptyCounts();
-		for (const finding of toPost) counts[finding.severity] += 1;
-		log(`posted ${inline.length} inline / ${unlocatable.length} summary-only, event=${event}`);
+		for (const finding of tracked) counts[finding.severity] += 1;
+		log(`tracked ${tracked.length} / untracked ${untracked.length} / dropped ${dropped.length}, event=${event}`);
 		return {
 			status: "success",
 			event,
 			counts,
-			findingsCount: toPost.length,
+			findingsCount: tracked.length,
 			incompleteFiles: analysis.oversizedFiles.length,
 			error: null
 		};

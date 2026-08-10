@@ -27,11 +27,19 @@ export interface CreateReviewInput {
 	comments: readonly InlineCommentInput[];
 }
 
+export interface FileCommentInput {
+	path: string;
+	body: string;
+	commitId: string;
+}
+
 export interface GitHubClient {
 	getPullRequest(): Promise<PullRequestInfo>;
 	getDiff(from: string, to: string): Promise<string>;
 	listThreads(): Promise<ThreadInfo[]>;
 	createReview(input: CreateReviewInput): Promise<void>;
+	/** 行を特定できない指摘をファイル単位のスレッドとして立てる。 */
+	createFileComment(input: FileCommentInput): Promise<void>;
 	/** 自分のものかどうかは判定せず、そのまま古い順に返す。 */
 	listReviews(): Promise<ReviewRecord[]>;
 	dismissReview(reviewId: number, message: string): Promise<void>;
@@ -164,6 +172,18 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 					side: 'RIGHT',
 					body: comment.body,
 				})),
+			});
+		},
+
+		async createFileComment(input) {
+			await octokit.rest.pulls.createReviewComment({
+				owner,
+				repo,
+				pull_number: prNumber,
+				commit_id: input.commitId,
+				path: input.path,
+				body: input.body,
+				subject_type: 'file',
 			});
 		},
 
