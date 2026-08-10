@@ -92,6 +92,7 @@ async function main(): Promise<void> {
 	core.setOutput('status', result.status);
 	core.setOutput('review-event', result.event);
 	core.setOutput('findings-count', String(result.findingsCount));
+	core.setOutput('resolved-count', String(result.resolvedCount));
 	core.setOutput('critical-count', String(result.counts.critical));
 	core.setOutput('major-count', String(result.counts.major));
 	core.setOutput('minor-count', String(result.counts.minor));

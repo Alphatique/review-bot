@@ -85,6 +85,9 @@ outputs:
   findings-count:
     description: 'Number of new findings posted'
     value: ${{ steps.review.outputs['findings-count'] }}
+  resolved-count:
+    description: 'Number of findings this run resolved automatically'
+    value: ${{ steps.review.outputs['resolved-count'] }}
   critical-count:
     description: 'Number of new critical findings'
     value: ${{ steps.review.outputs['critical-count'] }}

@@ -26751,6 +26751,7 @@ async function main() {
 	import_core.setOutput("status", result.status);
 	import_core.setOutput("review-event", result.event);
 	import_core.setOutput("findings-count", String(result.findingsCount));
+	import_core.setOutput("resolved-count", String(result.resolvedCount));
 	import_core.setOutput("critical-count", String(result.counts.critical));
 	import_core.setOutput("major-count", String(result.counts.major));
 	import_core.setOutput("minor-count", String(result.counts.minor));
