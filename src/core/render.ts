@@ -1,6 +1,6 @@
 import type { KeyedFinding } from './dedupe';
 import { type Language, messages } from './i18n';
-import { buildInlineMarker, FAILURE_MARKER, SUMMARY_MARKER } from './marker';
+import { buildInlineMarker, REVIEW_MARKER } from './marker';
 import { SEVERITIES, SEVERITY_ORDER, type Severity } from './schema';
 
 const SEVERITY_EMOJI: Record<Severity, string> = {
@@ -30,14 +30,11 @@ export interface SummaryInput {
 	unlocatable: readonly KeyedFinding[];
 	excludedFiles: readonly string[];
 	oversizedFiles: readonly string[];
-	mode: 'auto' | 'full';
 }
 
 export function renderSummary(input: SummaryInput): string {
 	const m = messages(input.lang);
 	const lines: string[] = [m.summaryHeading, ''];
-
-	lines.push(input.mode === 'full' ? m.fullNote : m.incrementalNote, '');
 
 	const total = input.posted.length + input.unlocatable.length;
 	if (total === 0) {
@@ -66,7 +63,7 @@ export function renderSummary(input: SummaryInput): string {
 		lines.push(m.oversizedWarning(input.oversizedFiles), '');
 	}
 
-	lines.push(SUMMARY_MARKER);
+	lines.push(REVIEW_MARKER);
 	return `${lines.join('\n').trimEnd()}\n`;
 }
 
@@ -89,8 +86,7 @@ export function renderFailureSummary(
 		'',
 		'</details>',
 		'',
-		SUMMARY_MARKER,
-		FAILURE_MARKER,
+		REVIEW_MARKER,
 	].join('\n')}\n`;
 }
 

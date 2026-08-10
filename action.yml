@@ -19,10 +19,6 @@ inputs:
   pr-number:
     description: 'Pull request number. Defaults to the number in the event payload.'
     required: false
-  mode:
-    description: 'auto (review changes since the last review) or full (review the whole diff).'
-    required: false
-    default: 'auto'
   instructions-file:
     description: 'Path to a Markdown file describing what to review. Falls back to built-in defaults.'
     required: false
@@ -112,7 +108,6 @@ runs:
         INPUT_GITHUB-TOKEN: ${{ inputs.github-token }}
         INPUT_REPO: ${{ inputs.repo }}
         INPUT_PR-NUMBER: ${{ inputs.pr-number }}
-        INPUT_MODE: ${{ inputs.mode }}
         INPUT_INSTRUCTIONS-FILE: ${{ inputs.instructions-file }}
         INPUT_EXCLUDE: ${{ inputs.exclude }}
         INPUT_LANGUAGE: ${{ inputs.language }}

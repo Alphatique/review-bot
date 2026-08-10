@@ -25781,8 +25781,6 @@ const EN = {
 	summaryHeading: "## 🤖 Code Review",
 	noFindings: "No new findings.",
 	findingsCount: (n) => `${n} new finding${n === 1 ? "" : "s"} posted inline.`,
-	incrementalNote: "Reviewed the changes since the last review.",
-	fullNote: "Reviewed the full diff of this pull request.",
 	unlocatableHeading: "### Findings without a diff location",
 	unlocatableNote: "These could not be anchored to a line in the diff, so they are listed here.",
 	oversizedWarning: (files) => `> ⚠️ ${files.length} file(s) were skipped because the diff exceeded the size limit and were **not reviewed**: ${files.map((f) => `\`${f}\``).join(", ")}`,
@@ -25795,8 +25793,6 @@ const JA = {
 	summaryHeading: "## 🤖 コードレビュー",
 	noFindings: "新規の指摘はありません。",
 	findingsCount: (n) => `${n} 件の新規指摘をインラインコメントとして投稿しました。`,
-	incrementalNote: "前回のレビュー以降の変更をレビューしました。",
-	fullNote: "この PR の差分全体をレビューしました。",
 	unlocatableHeading: "### 行を特定できなかった指摘",
 	unlocatableNote: "差分内の行に紐づけられなかったため、ここにまとめて記載します。",
 	oversizedWarning: (files) => `> ⚠️ 差分がサイズ上限を超えたため ${files.length} 件のファイルを**レビューしていません**: ${files.map((f) => `\`${f}\``).join(", ")}`,
@@ -25810,7 +25806,6 @@ function messages(lang) {
 }
 //#endregion
 //#region src/config.ts
-const MODES = ["auto", "full"];
 const EFFORTS = [
 	"low",
 	"medium",
@@ -25835,7 +25830,6 @@ function loadConfig(input) {
 	const repo = str(input, "repo");
 	if (!repo) errors.push("repo is required");
 	const prNumber = int(input, "pr-number", errors, { min: 1 });
-	const mode = pick(input, "mode", MODES, "auto", errors);
 	const language = pick(input, "language", LANGUAGES, "en", errors);
 	const requestChangesOn = pick(input, "request-changes-on", REQUEST_CHANGES_ON_VALUES, "critical", errors);
 	const effort = pick(input, "effort", EFFORTS, "high", errors);
@@ -25866,7 +25860,6 @@ function loadConfig(input) {
 			githubToken,
 			repo,
 			prNumber,
-			mode,
 			instructionsFile: str(input, "instructions-file") || ".github/review-instructions.md",
 			exclude: [...DEFAULT_EXCLUDE, ...lines(input, "exclude")],
 			language,
@@ -26044,14 +26037,12 @@ async function runAgent(input) {
 }
 //#endregion
 //#region src/core/marker.ts
-/** レビュー本文がこの Action のものだと識別するマーカー。絶対に変更しない。 */
-const SUMMARY_MARKER = "<!-- review-bot:v1 summary -->";
 /**
-* レビューを完了できなかったときの通知に付けるマーカー。
-* これが付いたレビューを「前回レビュー地点」に採用すると、失敗した範囲が
-* 二度とレビューされないまま緑になるため、増分の起点から除外する。
+* この Action が出した Review だと識別するマーカー。絶対に変更しない。
+* v1 では増分レビューの起点探索に使っていたが、v2 では「自分の Review を
+* identity API 無しで見つける」ために使う。
 */
-const FAILURE_MARKER = "<!-- review-bot:v1 failure -->";
+const REVIEW_MARKER = "<!-- review-bot:v1 summary -->";
 const INLINE_MARKER_RE = /<!--\s*review-bot:v1 key=([0-9a-f]{12}) sev=([a-z]+)\s*-->/g;
 /**
 * 指摘の同一性キー。行番号を含めないので、後続コミットで行がずれても
@@ -26075,12 +26066,6 @@ function parseInlineMarker(body) {
 		key,
 		severity
 	};
-}
-function hasSummaryMarker(body) {
-	return body.includes(SUMMARY_MARKER);
-}
-function hasFailureMarker(body) {
-	return body.includes(FAILURE_MARKER);
 }
 //#endregion
 //#region src/io/github.ts
@@ -26118,20 +26103,6 @@ function createGitHubClient(options) {
 				isFork: data.head.repo?.full_name !== `${owner}/${repo}`,
 				isDraft: data.draft ?? false
 			};
-		},
-		async getLastReviewedCommit() {
-			const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
-				owner,
-				repo,
-				pull_number: prNumber,
-				per_page: 100
-			});
-			for (let i = reviews.length - 1; i >= 0; i -= 1) {
-				const review = reviews[i];
-				const body = review.body ?? "";
-				if (hasSummaryMarker(body) && !hasFailureMarker(body)) return review.commit_id ?? null;
-			}
-			return null;
 		},
 		async getDiff(from, to) {
 			return (await octokit.rest.repos.compareCommitsWithBasehead({
@@ -26269,7 +26240,6 @@ function renderInlineComment(finding, _lang) {
 function renderSummary(input) {
 	const m = messages(input.lang);
 	const lines = [m.summaryHeading, ""];
-	lines.push(input.mode === "full" ? m.fullNote : m.incrementalNote, "");
 	const total = input.posted.length + input.unlocatable.length;
 	if (total === 0) lines.push(m.noFindings, "");
 	else {
@@ -26284,7 +26254,7 @@ function renderSummary(input) {
 		}
 	}
 	if (input.oversizedFiles.length > 0) lines.push(m.oversizedWarning(input.oversizedFiles), "");
-	lines.push(SUMMARY_MARKER);
+	lines.push(REVIEW_MARKER);
 	return `${lines.join("\n").trimEnd()}\n`;
 }
 function renderFailureSummary(errorText, lang) {
@@ -26303,8 +26273,7 @@ function renderFailureSummary(errorText, lang) {
 		"",
 		"</details>",
 		"",
-		SUMMARY_MARKER,
-		FAILURE_MARKER
+		REVIEW_MARKER
 	].join("\n")}\n`;
 }
 function renderCounts(findings) {
@@ -26362,9 +26331,8 @@ async function runReview(deps, config) {
 		return aborted(error);
 	}
 	try {
-		const from = (config.mode === "full" ? null : await github.getLastReviewedCommit()) ?? pr.baseSha;
-		log(`reviewing ${from}...${pr.headSha} (mode=${config.mode})`);
-		const analysis = analyzeDiff(await github.getDiff(from, pr.headSha), {
+		log(`reviewing ${pr.baseSha}...${pr.headSha}`);
+		const analysis = analyzeDiff(await github.getDiff(pr.baseSha, pr.headSha), {
 			exclude: config.exclude,
 			maxBytes: config.diffMaxBytes
 		});
@@ -26424,8 +26392,7 @@ async function runReview(deps, config) {
 			posted,
 			unlocatable,
 			excludedFiles: analysis.excludedFiles,
-			oversizedFiles: analysis.oversizedFiles,
-			mode: config.mode
+			oversizedFiles: analysis.oversizedFiles
 		});
 		await github.createReview({
 			body,
@@ -26466,7 +26433,6 @@ const INPUT_KEYS = [
 	"github-token",
 	"repo",
 	"pr-number",
-	"mode",
 	"instructions-file",
 	"exclude",
 	"language",

@@ -4,7 +4,7 @@ import { DEFAULT_EXCLUDE } from '../src/core/diff';
 import {
 	findingKey,
 	parseInlineMarker,
-	SUMMARY_MARKER,
+	REVIEW_MARKER,
 } from '../src/core/marker';
 import type { Finding } from '../src/core/schema';
 import type { AgentOutcome } from '../src/io/agent';
@@ -29,7 +29,6 @@ const CONFIG: Config = {
 	githubToken: 'ghs_x',
 	repo: 'owner/repo',
 	prNumber: 42,
-	mode: 'auto',
 	instructionsFile: '.github/review-instructions.md',
 	exclude: [...DEFAULT_EXCLUDE],
 	language: 'ja',
@@ -56,7 +55,6 @@ const PR: PullRequestInfo = {
 
 interface FakeOptions {
 	pr?: Partial<PullRequestInfo>;
-	lastReviewed?: string | null;
 	diff?: string;
 	existing?: Awaited<ReturnType<GitHubClient['listExistingFindings']>>;
 	outcomes?: AgentOutcome[];
@@ -71,7 +69,6 @@ function setup(options: FakeOptions = {}) {
 
 	const github: GitHubClient = {
 		getPullRequest: async () => ({ ...PR, ...options.pr }),
-		getLastReviewedCommit: async () => options.lastReviewed ?? null,
 		getDiff: async (from, to) => {
 			diffRequests.push({ from, to });
 			return options.diff ?? DIFF;
@@ -107,21 +104,9 @@ function finding(overrides: Partial<Finding> = {}): Finding {
 }
 
 describe('runReview', () => {
-	test('初回は base sha からの差分を取る', async () => {
+	test('常に base sha からの差分を取る', async () => {
 		const { deps, diffRequests } = setup();
 		await runReview(deps, CONFIG);
-		expect(diffRequests[0]).toEqual({ from: 'base', to: 'head' });
-	});
-
-	test('2 回目以降は前回レビュー地点からの差分を取る', async () => {
-		const { deps, diffRequests } = setup({ lastReviewed: 'prev' });
-		await runReview(deps, CONFIG);
-		expect(diffRequests[0]).toEqual({ from: 'prev', to: 'head' });
-	});
-
-	test('mode: full なら前回地点を無視して base から取る', async () => {
-		const { deps, diffRequests } = setup({ lastReviewed: 'prev' });
-		await runReview(deps, { ...CONFIG, mode: 'full' });
 		expect(diffRequests[0]).toEqual({ from: 'base', to: 'head' });
 	});
 
@@ -237,7 +222,7 @@ describe('runReview', () => {
 		expect(result.status).toBe('failed');
 		expect(reviews).toHaveLength(1);
 		expect(reviews[0]!.event).toBe('COMMENT');
-		expect(reviews[0]!.body).toContain(SUMMARY_MARKER);
+		expect(reviews[0]!.body).toContain(REVIEW_MARKER);
 		expect(reviews[0]!.body).toContain('boom');
 	});
 

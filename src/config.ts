@@ -6,9 +6,6 @@ import { DEFAULT_EXCLUDE } from './core/diff';
 import { type Language, LANGUAGES } from './core/i18n';
 import type { ParseResult } from './core/schema';
 
-export const MODES = ['auto', 'full'] as const;
-export type Mode = (typeof MODES)[number];
-
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Effort = (typeof EFFORTS)[number];
 
@@ -17,7 +14,6 @@ export interface Config {
 	githubToken: string;
 	repo: string;
 	prNumber: number;
-	mode: Mode;
 	instructionsFile: string;
 	exclude: string[];
 	language: Language;
@@ -57,7 +53,6 @@ export function loadConfig(input: RawInputs): ParseResult<Config> {
 	if (!repo) errors.push('repo is required');
 
 	const prNumber = int(input, 'pr-number', errors, { min: 1 });
-	const mode = pick(input, 'mode', MODES, 'auto', errors);
 	const language = pick(input, 'language', LANGUAGES, 'en', errors);
 	const requestChangesOn = pick(
 		input,
@@ -92,7 +87,6 @@ export function loadConfig(input: RawInputs): ParseResult<Config> {
 			githubToken,
 			repo,
 			prNumber,
-			mode,
 			instructionsFile:
 				str(input, 'instructions-file') || '.github/review-instructions.md',
 			exclude: [...DEFAULT_EXCLUDE, ...lines(input, 'exclude')],

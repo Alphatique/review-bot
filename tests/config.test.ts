@@ -6,7 +6,6 @@ const VALID = {
 	'github-token': 'ghs_x',
 	repo: 'owner/repo',
 	'pr-number': '42',
-	mode: 'auto',
 	language: 'ja',
 	'request-changes-on': 'major',
 	'fail-on-error': 'true',
@@ -69,10 +68,6 @@ describe('loadConfig', () => {
 
 	test('未知の language を拒否する', () => {
 		expect(loadConfig({ ...VALID, language: 'fr' }).ok).toBe(false);
-	});
-
-	test('未知の mode を拒否する', () => {
-		expect(loadConfig({ ...VALID, mode: 'turbo' }).ok).toBe(false);
 	});
 
 	test('未知の request-changes-on を拒否する', () => {

@@ -1,10 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { KeyedFinding } from '../../src/core/dedupe';
-import {
-	FAILURE_MARKER,
-	parseInlineMarker,
-	SUMMARY_MARKER,
-} from '../../src/core/marker';
+import { parseInlineMarker, REVIEW_MARKER } from '../../src/core/marker';
 import {
 	renderFailureSummary,
 	renderInlineComment,
@@ -49,9 +45,8 @@ describe('renderSummary', () => {
 			unlocatable: [],
 			excludedFiles: [],
 			oversizedFiles: [],
-			mode: 'auto',
 		});
-		expect(out).toContain(SUMMARY_MARKER);
+		expect(out).toContain(REVIEW_MARKER);
 	});
 
 	test('重大度ごとの件数を出す', () => {
@@ -61,7 +56,6 @@ describe('renderSummary', () => {
 			unlocatable: [],
 			excludedFiles: [],
 			oversizedFiles: [],
-			mode: 'auto',
 		});
 		expect(out).toContain('major');
 		expect(out).toContain('minor');
@@ -74,9 +68,8 @@ describe('renderSummary', () => {
 			unlocatable: [],
 			excludedFiles: [],
 			oversizedFiles: [],
-			mode: 'auto',
 		});
-		expect(out).toContain(SUMMARY_MARKER);
+		expect(out).toContain(REVIEW_MARKER);
 		expect(out.length).toBeGreaterThan(0);
 	});
 
@@ -87,7 +80,6 @@ describe('renderSummary', () => {
 			unlocatable: [{ ...FINDING, line: null }],
 			excludedFiles: [],
 			oversizedFiles: [],
-			mode: 'auto',
 		});
 		expect(out).toContain('null 参照の可能性');
 		expect(out).toContain('src/a.ts');
@@ -100,7 +92,6 @@ describe('renderSummary', () => {
 			unlocatable: [],
 			excludedFiles: [],
 			oversizedFiles: ['src/huge.ts'],
-			mode: 'auto',
 		});
 		expect(out).toContain('src/huge.ts');
 	});
@@ -110,26 +101,10 @@ describe('renderFailureSummary', () => {
 	test('エラー本文とマーカーを含む', () => {
 		const out = renderFailureSummary('timed out', 'ja');
 		expect(out).toContain('timed out');
-		expect(out).toContain(SUMMARY_MARKER);
-	});
-
-	test('失敗マーカーを含み、増分の起点にならないようにする', () => {
-		expect(renderFailureSummary('timed out', 'ja')).toContain(FAILURE_MARKER);
-	});
-
-	test('成功サマリには失敗マーカーを含めない', () => {
-		const out = renderSummary({
-			lang: 'ja',
-			posted: [],
-			unlocatable: [],
-			excludedFiles: [],
-			oversizedFiles: [],
-			mode: 'auto',
-		});
-		expect(out).not.toContain(FAILURE_MARKER);
+		expect(out).toContain(REVIEW_MARKER);
 	});
 
 	test('エラー本文が空でも成立する', () => {
-		expect(renderFailureSummary('', 'en')).toContain(SUMMARY_MARKER);
+		expect(renderFailureSummary('', 'en')).toContain(REVIEW_MARKER);
 	});
 });

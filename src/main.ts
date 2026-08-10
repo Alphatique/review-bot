@@ -13,7 +13,6 @@ const INPUT_KEYS = [
 	'github-token',
 	'repo',
 	'pr-number',
-	'mode',
 	'instructions-file',
 	'exclude',
 	'language',

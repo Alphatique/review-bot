@@ -1,11 +1,7 @@
 import { getOctokit } from '@actions/github';
 import type { ReviewEvent } from '../core/decision';
 import type { ExistingFinding } from '../core/dedupe';
-import {
-	hasFailureMarker,
-	hasSummaryMarker,
-	parseInlineMarker,
-} from '../core/marker';
+import { parseInlineMarker } from '../core/marker';
 
 export interface PullRequestInfo {
 	baseSha: string;
@@ -32,8 +28,6 @@ export interface CreateReviewInput {
 
 export interface GitHubClient {
 	getPullRequest(): Promise<PullRequestInfo>;
-	/** この Action が前回レビューした commit sha。初回なら null。 */
-	getLastReviewedCommit(): Promise<string | null>;
 	getDiff(from: string, to: string): Promise<string>;
 	listExistingFindings(): Promise<ExistingFinding[]>;
 	createReview(input: CreateReviewInput): Promise<void>;
@@ -97,24 +91,6 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 				isFork: data.head.repo?.full_name !== `${owner}/${repo}`,
 				isDraft: data.draft ?? false,
 			};
-		},
-
-		async getLastReviewedCommit() {
-			const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
-				owner,
-				repo,
-				pull_number: prNumber,
-				per_page: 100,
-			});
-			for (let i = reviews.length - 1; i >= 0; i -= 1) {
-				const review = reviews[i]!;
-				const body = review.body ?? '';
-				// 失敗通知を起点に採用すると、失敗した範囲が二度とレビューされない。
-				if (hasSummaryMarker(body) && !hasFailureMarker(body)) {
-					return review.commit_id ?? null;
-				}
-			}
-			return null;
 		},
 
 		async getDiff(from, to) {

@@ -1,12 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
 	buildInlineMarker,
-	FAILURE_MARKER,
 	findingKey,
-	hasFailureMarker,
-	hasSummaryMarker,
+	hasReviewMarker,
 	parseInlineMarker,
-	SUMMARY_MARKER,
+	REVIEW_MARKER,
 } from '../../src/core/marker';
 
 describe('findingKey', () => {
@@ -62,22 +60,16 @@ describe('inline marker', () => {
 	});
 });
 
-describe('summary marker', () => {
-	test('サマリマーカーを検出できる', () => {
-		expect(hasSummaryMarker(`サマリ\n${SUMMARY_MARKER}`)).toBe(true);
+describe('review marker', () => {
+	test('レビューマーカーを検出できる', () => {
+		expect(hasReviewMarker(`サマリ\n${REVIEW_MARKER}`)).toBe(true);
 	});
 
 	test('無ければ false', () => {
-		expect(hasSummaryMarker('ただの本文')).toBe(false);
-	});
-});
-
-describe('failure marker', () => {
-	test('失敗マーカーを検出できる', () => {
-		expect(hasFailureMarker(`失敗\n${FAILURE_MARKER}`)).toBe(true);
+		expect(hasReviewMarker('ただの本文')).toBe(false);
 	});
 
-	test('成功サマリには含まれない', () => {
-		expect(hasFailureMarker(`サマリ\n${SUMMARY_MARKER}`)).toBe(false);
+	test('マーカー文字列は v1 と同じままにする', () => {
+		expect(REVIEW_MARKER).toBe('<!-- review-bot:v1 summary -->');
 	});
 });

@@ -92,12 +92,9 @@ export async function runReview(
 	}
 
 	try {
-		const lastReviewed =
-			config.mode === 'full' ? null : await github.getLastReviewedCommit();
-		const from = lastReviewed ?? pr.baseSha;
-		log(`reviewing ${from}...${pr.headSha} (mode=${config.mode})`);
+		log(`reviewing ${pr.baseSha}...${pr.headSha}`);
 
-		const rawDiff = await github.getDiff(from, pr.headSha);
+		const rawDiff = await github.getDiff(pr.baseSha, pr.headSha);
 		const analysis = analyzeDiff(rawDiff, {
 			exclude: config.exclude,
 			maxBytes: config.diffMaxBytes,
@@ -174,7 +171,6 @@ export async function runReview(
 			unlocatable,
 			excludedFiles: analysis.excludedFiles,
 			oversizedFiles: analysis.oversizedFiles,
-			mode: config.mode,
 		});
 
 		await github.createReview({
