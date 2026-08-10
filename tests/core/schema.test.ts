@@ -128,6 +128,31 @@ describe('parseSubmission', () => {
 		expect(result.value.resolvedError).not.toBeNull();
 	});
 
+	test('resolved は entry-by-entry フィルタではなく配列ごと落ちる（有効な要素も道連れ）', () => {
+		const result = parseSubmission({
+			findings: [
+				{
+					severity: 'major',
+					file: 'src/a.ts',
+					line: 12,
+					title: 'null 参照の可能性',
+					body: 'foo が undefined になりうる',
+				},
+			],
+			resolved: [
+				{ key: 'abc123def456', reason: 'ok' },
+				{ key: 'ZZZ', reason: 'r' },
+			],
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		// 1 件目は妥当だが、2 件目が不正なので配列ごと落ちる。
+		// entry-by-entry フィルタなら [{ key: 'abc123def456', ... }] が残るはず。
+		expect(result.value.resolved).toEqual([]);
+		expect(result.value.resolvedError).not.toBeNull();
+		expect(result.value.findings).toHaveLength(1);
+	});
+
 	test('findings が壊れていれば resolved が有効でも拒否する', () => {
 		const result = parseSubmission({
 			findings: [
