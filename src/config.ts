@@ -16,6 +16,7 @@ export interface Config {
 	language: Language;
 	blockOn: BlockOn;
 	approve: boolean;
+	autoResolve: boolean;
 	failOnError: boolean;
 	failOnIncomplete: boolean;
 	model: string;
@@ -85,6 +86,7 @@ export function loadConfig(input: RawInputs): ParseResult<Config> {
 			language,
 			blockOn,
 			approve: bool(input, 'approve', true),
+			autoResolve: bool(input, 'auto-resolve', true),
 			failOnError: bool(input, 'fail-on-error', true),
 			failOnIncomplete: bool(input, 'fail-on-incomplete', false),
 			model: str(input, 'model') || 'claude-sonnet-5',

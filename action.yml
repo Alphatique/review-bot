@@ -38,6 +38,10 @@ inputs:
     description: 'Let the action submit APPROVE when nothing at or above block-on remains. Set to false to never approve.'
     required: false
     default: 'true'
+  auto-resolve:
+    description: 'Let the action resolve findings it judges to be fixed in the current code. Set to false to only ever read thread state.'
+    required: false
+    default: 'true'
   fail-on-error:
     description: 'Fail the action when the review itself could not be completed.'
     required: false
@@ -117,6 +121,7 @@ runs:
         INPUT_LANGUAGE: ${{ inputs.language }}
         INPUT_BLOCK-ON: ${{ inputs.block-on }}
         INPUT_APPROVE: ${{ inputs.approve }}
+        INPUT_AUTO-RESOLVE: ${{ inputs.auto-resolve }}
         INPUT_FAIL-ON-ERROR: ${{ inputs.fail-on-error }}
         INPUT_FAIL-ON-INCOMPLETE: ${{ inputs.fail-on-incomplete }}
         INPUT_MODEL: ${{ inputs.model }}

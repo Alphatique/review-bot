@@ -86,6 +86,18 @@ describe('loadConfig', () => {
 		expect(result.value.approve).toBe(false);
 	});
 
+	test('auto-resolve の既定は true', () => {
+		const result = loadConfig(VALID);
+		if (!result.ok) throw new Error('expected ok');
+		expect(result.value.autoResolve).toBe(true);
+	});
+
+	test('auto-resolve を false にできる', () => {
+		const result = loadConfig({ ...VALID, 'auto-resolve': 'false' });
+		if (!result.ok) throw new Error('expected ok');
+		expect(result.value.autoResolve).toBe(false);
+	});
+
 	test('未知の effort を拒否する', () => {
 		expect(loadConfig({ ...VALID, effort: 'turbo' }).ok).toBe(false);
 	});

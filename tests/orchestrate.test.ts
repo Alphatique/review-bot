@@ -37,6 +37,7 @@ const CONFIG: Config = {
 	language: 'ja',
 	blockOn: 'major',
 	approve: true,
+	autoResolve: true,
 	failOnError: true,
 	failOnIncomplete: false,
 	model: 'claude-sonnet-5',

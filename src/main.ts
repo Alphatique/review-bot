@@ -18,6 +18,7 @@ const INPUT_KEYS = [
 	'language',
 	'block-on',
 	'approve',
+	'auto-resolve',
 	'fail-on-error',
 	'fail-on-incomplete',
 	'model',

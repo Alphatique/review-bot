@@ -117,6 +117,8 @@ export async function runReview(
 			(await deps.readInstructions(config.instructionsFile)) ??
 			DEFAULT_INSTRUCTIONS;
 
+		const existing = await github.listThreads();
+
 		const prompt = buildPrompt({
 			instructions,
 			repo: config.repo,
@@ -126,6 +128,9 @@ export async function runReview(
 			lang: config.language,
 			oversizedFiles: analysis.oversizedFiles,
 			toolName: SUBMIT_TOOL_NAME,
+			outstanding: existing.filter(t => !t.isResolved),
+			resolvedThreads: existing.filter(t => t.isResolved),
+			autoResolve: config.autoResolve,
 		});
 
 		let outcome: AgentOutcome = { ok: false, error: 'not attempted' };
@@ -137,7 +142,6 @@ export async function runReview(
 		}
 		if (!outcome.ok) return failure(outcome.error);
 
-		const existing = await github.listThreads();
 		const reviews = await github.listReviews().catch(error => {
 			// 判定を出し直す側に倒れる。通知が増えるだけで安全側。
 			log(`could not list reviews: ${describe(error)}`);
