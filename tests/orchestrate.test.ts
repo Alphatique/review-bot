@@ -8,6 +8,7 @@ import {
 } from '../src/core/marker';
 import type { Finding } from '../src/core/schema';
 import type { ThreadInfo } from '../src/core/thread';
+import type { ReviewRecord } from '../src/core/verdict';
 import type { AgentOutcome } from '../src/io/agent';
 import type {
 	CreateReviewInput,
@@ -58,6 +59,7 @@ interface FakeOptions {
 	pr?: Partial<PullRequestInfo>;
 	diff?: string;
 	existing?: ThreadInfo[];
+	existingReviews?: ReviewRecord[];
 	outcomes?: AgentOutcome[];
 	instructions?: string | null;
 }
@@ -67,6 +69,7 @@ function setup(options: FakeOptions = {}) {
 	const prompts: string[] = [];
 	const diffRequests: { from: string; to: string }[] = [];
 	const outcomes = [...(options.outcomes ?? [])];
+	const dismissals: { reviewId: number; message: string }[] = [];
 
 	const github: GitHubClient = {
 		getPullRequest: async () => ({ ...PR, ...options.pr }),
@@ -77,6 +80,10 @@ function setup(options: FakeOptions = {}) {
 		listThreads: async () => options.existing ?? [],
 		createReview: async input => {
 			reviews.push(input);
+		},
+		listReviews: async () => options.existingReviews ?? [],
+		dismissReview: async (reviewId, message) => {
+			dismissals.push({ reviewId, message });
 		},
 	};
 
@@ -90,7 +97,7 @@ function setup(options: FakeOptions = {}) {
 		log: () => {},
 	};
 
-	return { deps, reviews, prompts, diffRequests };
+	return { deps, reviews, prompts, diffRequests, dismissals };
 }
 
 function finding(overrides: Partial<Finding> = {}): Finding {

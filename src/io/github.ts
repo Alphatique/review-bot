@@ -2,6 +2,7 @@ import { getOctokit } from '@actions/github';
 import type { ReviewEvent } from '../core/decision';
 import { parseInlineMarker, parseInlineTitle } from '../core/marker';
 import type { ThreadInfo } from '../core/thread';
+import type { ReviewRecord } from '../core/verdict';
 
 export interface PullRequestInfo {
 	baseSha: string;
@@ -31,6 +32,9 @@ export interface GitHubClient {
 	getDiff(from: string, to: string): Promise<string>;
 	listThreads(): Promise<ThreadInfo[]>;
 	createReview(input: CreateReviewInput): Promise<void>;
+	/** 自分のものかどうかは判定せず、そのまま古い順に返す。 */
+	listReviews(): Promise<ReviewRecord[]>;
+	dismissReview(reviewId: number, message: string): Promise<void>;
 }
 
 export interface GitHubClientOptions {
@@ -160,6 +164,30 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 					side: 'RIGHT',
 					body: comment.body,
 				})),
+			});
+		},
+
+		async listReviews() {
+			const reviews = await octokit.paginate(octokit.rest.pulls.listReviews, {
+				owner,
+				repo,
+				pull_number: prNumber,
+				per_page: 100,
+			});
+			return reviews.map(review => ({
+				id: review.id,
+				body: review.body ?? '',
+				state: review.state,
+			}));
+		},
+
+		async dismissReview(reviewId, message) {
+			await octokit.rest.pulls.dismissReview({
+				owner,
+				repo,
+				pull_number: prNumber,
+				review_id: reviewId,
+				message,
 			});
 		},
 	};

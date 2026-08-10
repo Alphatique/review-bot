@@ -26172,6 +26172,27 @@ function createGitHubClient(options) {
 					body: comment.body
 				}))
 			});
+		},
+		async listReviews() {
+			return (await octokit.paginate(octokit.rest.pulls.listReviews, {
+				owner,
+				repo,
+				pull_number: prNumber,
+				per_page: 100
+			})).map((review) => ({
+				id: review.id,
+				body: review.body ?? "",
+				state: review.state
+			}));
+		},
+		async dismissReview(reviewId, message) {
+			await octokit.rest.pulls.dismissReview({
+				owner,
+				repo,
+				pull_number: prNumber,
+				review_id: reviewId,
+				message
+			});
 		}
 	};
 }
