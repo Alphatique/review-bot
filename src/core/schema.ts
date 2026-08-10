@@ -73,7 +73,10 @@ export const submitReviewInputShape = {
 		),
 };
 
-const submissionSchema = z.object(submitReviewInputShape);
+// findings と resolved は別々に検証する。resolved 側の 1 件の不備で
+// findings 全体を巻き添えにしないため（e.g. key の幻覚）。
+const findingsSchema = z.object({ findings: submitReviewInputShape.findings });
+const resolvedSchema = z.object({ resolved: submitReviewInputShape.resolved });
 
 export interface ResolvedFinding {
 	key: string;
@@ -83,23 +86,50 @@ export interface ResolvedFinding {
 export interface Submission {
 	findings: Finding[];
 	resolved: ResolvedFinding[];
+	/** resolved の検証に失敗した理由。成功時は null。 */
+	resolvedError: string | null;
 }
 
 export type ParseResult<T> =
 	| { ok: true; value: T }
 	| { ok: false; error: string };
 
-/** モデルがツールに渡した入力を検証する。 */
+function formatIssues(error: z.ZodError): string {
+	return error.issues
+		.map(issue => `${issue.path.join('.')}: ${issue.message}`)
+		.join('; ');
+}
+
+/**
+ * モデルがツールに渡した入力を検証する。
+ * findings が壊れていれば提出全体を失敗として扱うが、resolved が壊れている
+ * だけなら findings は活かし、resolved を空配列に落として resolvedError に
+ * 理由を残す（fail-closed: 何も resolve されないだけで、レビューは失われない）。
+ */
 export function parseSubmission(input: unknown): ParseResult<Submission> {
-	const result = submissionSchema.safeParse(input);
-	if (!result.success) {
-		const summary = result.error.issues
-			.map(issue => `${issue.path.join('.')}: ${issue.message}`)
-			.join('; ');
-		return { ok: false, error: summary };
+	const findingsResult = findingsSchema.safeParse(input);
+	if (!findingsResult.success) {
+		return { ok: false, error: formatIssues(findingsResult.error) };
 	}
+
+	const resolvedResult = resolvedSchema.safeParse(input);
+	if (!resolvedResult.success) {
+		return {
+			ok: true,
+			value: {
+				findings: findingsResult.data.findings,
+				resolved: [],
+				resolvedError: formatIssues(resolvedResult.error),
+			},
+		};
+	}
+
 	return {
 		ok: true,
-		value: { findings: result.data.findings, resolved: result.data.resolved },
+		value: {
+			findings: findingsResult.data.findings,
+			resolved: resolvedResult.data.resolved,
+			resolvedError: null,
+		},
 	};
 }

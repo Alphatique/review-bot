@@ -157,6 +157,13 @@ export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 	if (!parsed.ok) {
 		return { ok: false, error: `invalid tool input: ${parsed.error}` };
 	}
+	if (parsed.value.resolvedError !== null) {
+		// resolved だけが不正だった場合、review 自体は findings を持って成功する。
+		// 無言で捨てると気づけないので必ずログに残す。
+		input.log(
+			`resolved was dropped, findings kept: ${parsed.value.resolvedError}`,
+		);
+	}
 	return {
 		ok: true,
 		findings: parsed.value.findings,

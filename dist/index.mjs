@@ -23751,19 +23751,38 @@ const submitReviewInputShape = {
 		reason: string().min(1).describe("現在のコードでどう解消しているかを 1〜2 行で")
 	})).default([]).describe("現在のコードで既に解消している未解決指摘。確実なものだけ。無ければ空配列")
 };
-const submissionSchema = object(submitReviewInputShape);
-/** モデルがツールに渡した入力を検証する。 */
+const findingsSchema = object({ findings: submitReviewInputShape.findings });
+const resolvedSchema = object({ resolved: submitReviewInputShape.resolved });
+function formatIssues(error) {
+	return error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
+}
+/**
+* モデルがツールに渡した入力を検証する。
+* findings が壊れていれば提出全体を失敗として扱うが、resolved が壊れている
+* だけなら findings は活かし、resolved を空配列に落として resolvedError に
+* 理由を残す（fail-closed: 何も resolve されないだけで、レビューは失われない）。
+*/
 function parseSubmission(input) {
-	const result = submissionSchema.safeParse(input);
-	if (!result.success) return {
+	const findingsResult = findingsSchema.safeParse(input);
+	if (!findingsResult.success) return {
 		ok: false,
-		error: result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")
+		error: formatIssues(findingsResult.error)
+	};
+	const resolvedResult = resolvedSchema.safeParse(input);
+	if (!resolvedResult.success) return {
+		ok: true,
+		value: {
+			findings: findingsResult.data.findings,
+			resolved: [],
+			resolvedError: formatIssues(resolvedResult.error)
+		}
 	};
 	return {
 		ok: true,
 		value: {
-			findings: result.data.findings,
-			resolved: result.data.resolved
+			findings: findingsResult.data.findings,
+			resolved: resolvedResult.data.resolved,
+			resolvedError: null
 		}
 	};
 }
@@ -26050,6 +26069,7 @@ async function runAgent(input) {
 		ok: false,
 		error: `invalid tool input: ${parsed.error}`
 	};
+	if (parsed.value.resolvedError !== null) input.log(`resolved was dropped, findings kept: ${parsed.value.resolvedError}`);
 	return {
 		ok: true,
 		findings: parsed.value.findings,

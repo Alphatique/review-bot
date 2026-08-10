@@ -77,6 +77,7 @@ describe('parseSubmission', () => {
 		expect(result.value.resolved).toEqual([
 			{ key: 'abc123def456', reason: '該当行が削除された' },
 		]);
+		expect(result.value.resolvedError).toBeNull();
 	});
 
 	test('resolved が無ければ空配列として扱う', () => {
@@ -84,24 +85,57 @@ describe('parseSubmission', () => {
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.value.resolved).toEqual([]);
+		expect(result.value.resolvedError).toBeNull();
 	});
 
-	test('key が 12 桁 hex でなければ拒否する', () => {
-		expect(
-			parseSubmission({
-				findings: [],
-				resolved: [{ key: 'ZZZ', reason: 'r' }],
-			}).ok,
-		).toBe(false);
+	test('resolved の key が不正でも findings は活かす', () => {
+		const result = parseSubmission({
+			findings: [
+				{
+					severity: 'major',
+					file: 'src/a.ts',
+					line: 12,
+					title: 'null 参照の可能性',
+					body: 'foo が undefined になりうる',
+				},
+			],
+			resolved: [{ key: 'ZZZ', reason: 'r' }],
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.value.findings).toHaveLength(1);
+		expect(result.value.resolved).toEqual([]);
+		expect(result.value.resolvedError).not.toBeNull();
 	});
 
-	test('空の reason を拒否する', () => {
-		expect(
-			parseSubmission({
-				findings: [],
-				resolved: [{ key: 'abc123def456', reason: '' }],
-			}).ok,
-		).toBe(false);
+	test('resolved の reason が空でも findings は活かす（該当 1 件だけでなく配列ごと落ちる）', () => {
+		const result = parseSubmission({
+			findings: [
+				{
+					severity: 'major',
+					file: 'src/a.ts',
+					line: 12,
+					title: 'null 参照の可能性',
+					body: 'foo が undefined になりうる',
+				},
+			],
+			resolved: [{ key: 'abc123def456', reason: '' }],
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.value.findings).toHaveLength(1);
+		expect(result.value.resolved).toEqual([]);
+		expect(result.value.resolvedError).not.toBeNull();
+	});
+
+	test('findings が壊れていれば resolved が有効でも拒否する', () => {
+		const result = parseSubmission({
+			findings: [
+				{ severity: 'P0', file: 'a.ts', line: 1, title: 't', body: 'b' },
+			],
+			resolved: [{ key: 'abc123def456', reason: '該当行が削除された' }],
+		});
+		expect(result.ok).toBe(false);
 	});
 });
 
