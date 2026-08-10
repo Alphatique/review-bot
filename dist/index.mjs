@@ -26044,6 +26044,16 @@ async function runAgent(input) {
 */
 const REVIEW_MARKER = "<!-- review-bot:v1 summary -->";
 const INLINE_MARKER_RE = /<!--\s*review-bot:v1 key=([0-9a-f]{12}) sev=([a-z]+)\s*-->/g;
+const INLINE_TITLE_RE = /^\S+\s+\*\*(?:critical|major|minor)\*\*\s+—\s+(.+)$/;
+/**
+* インラインコメント本文の 1 行目からタイトルを復元する。
+* タイトルはマーカーに埋めない。任意の文字が入りうるためエンコードが必要になり、
+* マーカーが識別子以上のものになってしまう。
+*/
+function parseInlineTitle(body) {
+	const firstLine = body.split("\n", 1)[0] ?? "";
+	return INLINE_TITLE_RE.exec(firstLine.trim())?.[1]?.trim() || null;
+}
 /**
 * 指摘の同一性キー。行番号を含めないので、後続コミットで行がずれても
 * 同じ指摘だと判定できる。
@@ -26076,9 +26086,12 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
 			reviewThreads(first: 100, after: $cursor) {
 				pageInfo { hasNextPage endCursor }
 				nodes {
+					id
 					isResolved
 					isOutdated
-					comments(first: 1) { nodes { body } }
+					path
+					line
+					comments(first: 1) { nodes { body databaseId } }
 				}
 			}
 		}
@@ -26112,30 +26125,37 @@ function createGitHubClient(options) {
 				mediaType: { format: "diff" }
 			})).data;
 		},
-		async listExistingFindings() {
-			const findings = [];
+		async listThreads() {
+			const threads = [];
 			let cursor = null;
 			for (;;) {
-				const threads = (await octokit.graphql(REVIEW_THREADS_QUERY, {
+				const page = (await octokit.graphql(REVIEW_THREADS_QUERY, {
 					owner,
 					repo,
 					number: prNumber,
 					cursor
 				})).repository.pullRequest.reviewThreads;
-				for (const thread of threads.nodes) {
-					const marker = parseInlineMarker(thread.comments.nodes[0]?.body ?? "");
+				for (const thread of page.nodes) {
+					const comment = thread.comments.nodes[0];
+					if (!comment) continue;
+					const marker = parseInlineMarker(comment.body);
 					if (!marker) continue;
-					findings.push({
+					threads.push({
+						id: thread.id,
+						commentId: comment.databaseId,
 						key: marker.key,
 						severity: marker.severity,
+						file: thread.path,
+						line: thread.line,
+						title: parseInlineTitle(comment.body),
 						isResolved: thread.isResolved,
 						isOutdated: thread.isOutdated
 					});
 				}
-				if (!threads.pageInfo.hasNextPage) break;
-				cursor = threads.pageInfo.endCursor;
+				if (!page.pageInfo.hasNextPage) break;
+				cursor = page.pageInfo.endCursor;
 			}
-			return findings;
+			return threads;
 		},
 		async createReview(input) {
 			await octokit.rest.pulls.createReview({
@@ -26158,29 +26178,23 @@ function createGitHubClient(options) {
 //#endregion
 //#region src/core/dedupe.ts
 /**
-* 新規指摘を既存コメントと突き合わせ、まだ投稿していないものだけを返す。
+* 新規指摘を既存スレッドと突き合わせ、まだ投稿していないものだけを返す。
 * resolve 済み・outdated でも再投稿はしない（人間の判断を蒸し返さない）。
 */
 function dedupe(findings, existing) {
 	const existingKeys = new Set(existing.map((e) => e.key));
 	const seen = /* @__PURE__ */ new Set();
 	const toPost = [];
-	const alreadyPosted = [];
 	for (const finding of findings) {
 		const key = findingKey(finding.file, finding.title);
-		if (seen.has(key)) continue;
+		if (seen.has(key) || existingKeys.has(key)) continue;
 		seen.add(key);
-		const keyed = {
+		toPost.push({
 			...finding,
 			key
-		};
-		if (existingKeys.has(key)) alreadyPosted.push(keyed);
-		else toPost.push(keyed);
+		});
 	}
-	return {
-		toPost,
-		alreadyPosted
-	};
+	return { toPost };
 }
 //#endregion
 //#region src/core/prompt.ts
@@ -26368,7 +26382,7 @@ async function runReview(deps, config) {
 			log(`attempt ${attempt} failed: ${outcome.error}`);
 		}
 		if (!outcome.ok) return failure(outcome.error);
-		const existing = await github.listExistingFindings();
+		const existing = await github.listThreads();
 		const { toPost } = dedupe(outcome.findings, existing);
 		const inline = [];
 		const posted = [];

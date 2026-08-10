@@ -7,6 +7,7 @@ import {
 	REVIEW_MARKER,
 } from '../src/core/marker';
 import type { Finding } from '../src/core/schema';
+import type { ThreadInfo } from '../src/core/thread';
 import type { AgentOutcome } from '../src/io/agent';
 import type {
 	CreateReviewInput,
@@ -56,7 +57,7 @@ const PR: PullRequestInfo = {
 interface FakeOptions {
 	pr?: Partial<PullRequestInfo>;
 	diff?: string;
-	existing?: Awaited<ReturnType<GitHubClient['listExistingFindings']>>;
+	existing?: ThreadInfo[];
 	outcomes?: AgentOutcome[];
 	instructions?: string | null;
 }
@@ -73,7 +74,7 @@ function setup(options: FakeOptions = {}) {
 			diffRequests.push({ from, to });
 			return options.diff ?? DIFF;
 		},
-		listExistingFindings: async () => options.existing ?? [],
+		listThreads: async () => options.existing ?? [],
 		createReview: async input => {
 			reviews.push(input);
 		},
@@ -99,6 +100,21 @@ function finding(overrides: Partial<Finding> = {}): Finding {
 		line: 2,
 		title: '未使用の変数',
 		body: 'y が使われていない',
+		...overrides,
+	};
+}
+
+function thread(overrides: Partial<ThreadInfo> = {}): ThreadInfo {
+	return {
+		id: 'PRRT_1',
+		commentId: 1,
+		key: 'a'.repeat(12),
+		severity: 'major',
+		file: 'src/a.ts',
+		line: 2,
+		title: '未使用の変数',
+		isResolved: false,
+		isOutdated: false,
 		...overrides,
 	};
 }
@@ -169,14 +185,7 @@ describe('runReview', () => {
 		const f = finding();
 		const { deps, reviews } = setup({
 			outcomes: [{ ok: true, findings: [f] }],
-			existing: [
-				{
-					key: findingKey(f.file, f.title),
-					severity: 'major',
-					isResolved: false,
-					isOutdated: false,
-				},
-			],
+			existing: [thread({ key: findingKey(f.file, f.title) })],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.comments).toHaveLength(0);
@@ -185,14 +194,7 @@ describe('runReview', () => {
 	test('未解決の既存指摘があれば REQUEST_CHANGES を維持する', async () => {
 		const { deps, reviews } = setup({
 			outcomes: [{ ok: true, findings: [] }],
-			existing: [
-				{
-					key: 'a'.repeat(12),
-					severity: 'critical',
-					isResolved: false,
-					isOutdated: false,
-				},
-			],
+			existing: [thread({ severity: 'critical' })],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.event).toBe('REQUEST_CHANGES');

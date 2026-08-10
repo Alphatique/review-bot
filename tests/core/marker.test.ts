@@ -4,6 +4,7 @@ import {
 	findingKey,
 	hasReviewMarker,
 	parseInlineMarker,
+	parseInlineTitle,
 	REVIEW_MARKER,
 } from '../../src/core/marker';
 
@@ -71,5 +72,31 @@ describe('review marker', () => {
 
 	test('マーカー文字列は v1 と同じままにする', () => {
 		expect(REVIEW_MARKER).toBe('<!-- review-bot:v1 summary -->');
+	});
+});
+
+describe('parseInlineTitle', () => {
+	test('1 行目からタイトルを取り出す', () => {
+		const body = '🔴 **critical** — トークンがログに出る\n\n本文';
+		expect(parseInlineTitle(body)).toBe('トークンがログに出る');
+	});
+
+	test('severity が違っても読める', () => {
+		expect(parseInlineTitle('🟡 **minor** — 些細な問題\n\n本文')).toBe(
+			'些細な問題',
+		);
+	});
+
+	test('書式が違えば null', () => {
+		expect(parseInlineTitle('ただの本文')).toBeNull();
+	});
+
+	test('空文字なら null', () => {
+		expect(parseInlineTitle('')).toBeNull();
+	});
+
+	test('renderInlineComment の出力を読み戻せる', () => {
+		const body = '🟠 **major** — `foo` が undefined になりうる\n\n説明';
+		expect(parseInlineTitle(body)).toBe('`foo` が undefined になりうる');
 	});
 });

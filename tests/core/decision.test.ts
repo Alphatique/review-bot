@@ -1,10 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import { decideEvent } from '../../src/core/decision';
-import type { ExistingFinding } from '../../src/core/dedupe';
 import type { Severity } from '../../src/core/schema';
+import type { ThreadInfo } from '../../src/core/thread';
 
-function existing(severity: Severity, isResolved = false): ExistingFinding {
-	return { key: 'x'.repeat(12), severity, isResolved, isOutdated: false };
+function existing(severity: Severity, isResolved = false): ThreadInfo {
+	return {
+		id: 'PRRT_1',
+		commentId: 1,
+		key: 'x'.repeat(12),
+		severity,
+		file: 'src/a.ts',
+		line: 1,
+		title: 'なにか',
+		isResolved,
+		isOutdated: false,
+	};
 }
 
 describe('decideEvent', () => {

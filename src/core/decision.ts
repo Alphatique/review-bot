@@ -1,5 +1,5 @@
-import type { ExistingFinding } from './dedupe';
 import { isAtLeastAsSevere, type Severity } from './schema';
+import type { ThreadInfo } from './thread';
 
 export type ReviewEvent = 'COMMENT' | 'REQUEST_CHANGES';
 
@@ -15,7 +15,7 @@ export interface DecisionInput {
 	/** 今回のレビューで新たに投稿する指摘。 */
 	newFindings: readonly { severity: Severity }[];
 	/** GitHub 上に既にある bot の指摘。 */
-	existing: readonly ExistingFinding[];
+	existing: readonly ThreadInfo[];
 	threshold: RequestChangesOn;
 	/**
 	 * REQUEST_CHANGES を提出できるか。

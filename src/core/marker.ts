@@ -11,6 +11,20 @@ export const REVIEW_MARKER = '<!-- review-bot:v1 summary -->';
 const INLINE_MARKER_RE =
 	/<!--\s*review-bot:v1 key=([0-9a-f]{12}) sev=([a-z]+)\s*-->/g;
 
+// renderInlineComment が出す 1 行目。書式はこちらで生成しているので安定する。
+const INLINE_TITLE_RE = /^\S+\s+\*\*(?:critical|major|minor)\*\*\s+—\s+(.+)$/;
+
+/**
+ * インラインコメント本文の 1 行目からタイトルを復元する。
+ * タイトルはマーカーに埋めない。任意の文字が入りうるためエンコードが必要になり、
+ * マーカーが識別子以上のものになってしまう。
+ */
+export function parseInlineTitle(body: string): string | null {
+	const firstLine = body.split('\n', 1)[0] ?? '';
+	const match = INLINE_TITLE_RE.exec(firstLine.trim());
+	return match?.[1]?.trim() || null;
+}
+
 /**
  * 指摘の同一性キー。行番号を含めないので、後続コミットで行がずれても
  * 同じ指摘だと判定できる。

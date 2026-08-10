@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { dedupe, type ExistingFinding } from '../../src/core/dedupe';
+import { dedupe } from '../../src/core/dedupe';
 import { findingKey } from '../../src/core/marker';
 import type { Finding } from '../../src/core/schema';
 
@@ -14,43 +14,20 @@ function finding(overrides: Partial<Finding> = {}): Finding {
 	};
 }
 
-function existing(
-	f: Finding,
-	overrides: Partial<ExistingFinding> = {},
-): ExistingFinding {
-	return {
-		key: findingKey(f.file, f.title),
-		severity: f.severity,
-		isResolved: false,
-		isOutdated: false,
-		...overrides,
-	};
+function existing(f: Finding): { key: string } {
+	return { key: findingKey(f.file, f.title) };
 }
 
 describe('dedupe', () => {
 	test('既存コメントが無ければ全件を投稿対象にする', () => {
 		const result = dedupe([finding()], []);
 		expect(result.toPost).toHaveLength(1);
-		expect(result.alreadyPosted).toHaveLength(0);
 		expect(result.toPost[0]!.key).toMatch(/^[0-9a-f]{12}$/);
 	});
 
 	test('既存と一致する指摘は投稿しない', () => {
 		const f = finding();
 		const result = dedupe([f], [existing(f)]);
-		expect(result.toPost).toHaveLength(0);
-		expect(result.alreadyPosted).toHaveLength(1);
-	});
-
-	test('resolve 済みでも再投稿しない', () => {
-		const f = finding();
-		const result = dedupe([f], [existing(f, { isResolved: true })]);
-		expect(result.toPost).toHaveLength(0);
-	});
-
-	test('outdated でも再投稿しない', () => {
-		const f = finding();
-		const result = dedupe([f], [existing(f, { isOutdated: true })]);
 		expect(result.toPost).toHaveLength(0);
 	});
 

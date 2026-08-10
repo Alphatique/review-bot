@@ -1,7 +1,7 @@
 import { getOctokit } from '@actions/github';
 import type { ReviewEvent } from '../core/decision';
-import type { ExistingFinding } from '../core/dedupe';
-import { parseInlineMarker } from '../core/marker';
+import { parseInlineMarker, parseInlineTitle } from '../core/marker';
+import type { ThreadInfo } from '../core/thread';
 
 export interface PullRequestInfo {
 	baseSha: string;
@@ -29,7 +29,7 @@ export interface CreateReviewInput {
 export interface GitHubClient {
 	getPullRequest(): Promise<PullRequestInfo>;
 	getDiff(from: string, to: string): Promise<string>;
-	listExistingFindings(): Promise<ExistingFinding[]>;
+	listThreads(): Promise<ThreadInfo[]>;
 	createReview(input: CreateReviewInput): Promise<void>;
 }
 
@@ -46,9 +46,12 @@ interface ReviewThreadsResponse {
 			reviewThreads: {
 				pageInfo: { hasNextPage: boolean; endCursor: string | null };
 				nodes: {
+					id: string;
 					isResolved: boolean;
 					isOutdated: boolean;
-					comments: { nodes: { body: string }[] };
+					path: string;
+					line: number | null;
+					comments: { nodes: { body: string; databaseId: number }[] };
 				}[];
 			};
 		};
@@ -62,9 +65,12 @@ query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
 			reviewThreads(first: 100, after: $cursor) {
 				pageInfo { hasNextPage endCursor }
 				nodes {
+					id
 					isResolved
 					isOutdated
-					comments(first: 1) { nodes { body } }
+					path
+					line
+					comments(first: 1) { nodes { body databaseId } }
 				}
 			}
 		}
@@ -104,8 +110,8 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 			return response.data as unknown as string;
 		},
 
-		async listExistingFindings() {
-			const findings: ExistingFinding[] = [];
+		async listThreads() {
+			const threads: ThreadInfo[] = [];
 			let cursor: string | null = null;
 
 			for (;;) {
@@ -113,25 +119,31 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
 					REVIEW_THREADS_QUERY,
 					{ owner, repo, number: prNumber, cursor },
 				);
-				const threads = response.repository.pullRequest.reviewThreads;
+				const page = response.repository.pullRequest.reviewThreads;
 
-				for (const thread of threads.nodes) {
-					const body = thread.comments.nodes[0]?.body ?? '';
-					const marker = parseInlineMarker(body);
+				for (const thread of page.nodes) {
+					const comment = thread.comments.nodes[0];
+					if (!comment) continue;
+					const marker = parseInlineMarker(comment.body);
 					if (!marker) continue;
-					findings.push({
+					threads.push({
+						id: thread.id,
+						commentId: comment.databaseId,
 						key: marker.key,
 						severity: marker.severity,
+						file: thread.path,
+						line: thread.line,
+						title: parseInlineTitle(comment.body),
 						isResolved: thread.isResolved,
 						isOutdated: thread.isOutdated,
 					});
 				}
 
-				if (!threads.pageInfo.hasNextPage) break;
-				cursor = threads.pageInfo.endCursor;
+				if (!page.pageInfo.hasNextPage) break;
+				cursor = page.pageInfo.endCursor;
 			}
 
-			return findings;
+			return threads;
 		},
 
 		async createReview(input) {

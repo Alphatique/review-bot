@@ -136,7 +136,7 @@ export async function runReview(
 		}
 		if (!outcome.ok) return failure(outcome.error);
 
-		const existing = await github.listExistingFindings();
+		const existing = await github.listThreads();
 		const { toPost } = dedupe(outcome.findings, existing);
 
 		const inline: InlineCommentInput[] = [];
