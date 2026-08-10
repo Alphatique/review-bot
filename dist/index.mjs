@@ -23738,24 +23738,33 @@ function isAtLeastAsSevere(a, b) {
 * Agent SDK の `tool()` に渡す zod raw shape。
 * description はそのままモデルへの指示になるため、ここが実質的なプロンプトの一部。
 */
-const submitReviewInputShape = { findings: array(object({
-	severity: _enum(SEVERITIES).describe("critical=セキュリティ/データ破壊/本番停止級, major=明白な機能バグ/重大な性能問題, minor=ベストプラクティス違反/軽微なバグ/保守性"),
-	file: string().min(1).describe("リポジトリルートからの相対パス"),
-	line: number().int().min(1).nullable().describe("対象行番号（1始まり、変更後のファイル基準）。特定できなければ null"),
-	title: string().min(1).describe("指摘の短いタイトル"),
-	body: string().min(1).describe("2〜5行の説明。可能なら修正案を含める")
-})).describe("検出した指摘の配列。指摘が無ければ空配列") };
-const findingsPayloadSchema = object(submitReviewInputShape);
+const submitReviewInputShape = {
+	findings: array(object({
+		severity: _enum(SEVERITIES).describe("critical=セキュリティ/データ破壊/本番停止級, major=明白な機能バグ/重大な性能問題, minor=ベストプラクティス違反/軽微なバグ/保守性"),
+		file: string().min(1).describe("リポジトリルートからの相対パス"),
+		line: number().int().min(1).nullable().describe("対象行番号（1始まり、変更後のファイル基準）。特定できなければ null"),
+		title: string().min(1).describe("指摘の短いタイトル"),
+		body: string().min(1).describe("2〜5行の説明。可能なら修正案を含める")
+	})).describe("検出した指摘の配列。指摘が無ければ空配列"),
+	resolved: array(object({
+		key: string().regex(/^[0-9a-f]{12}$/).describe("プロンプトの「未解決の指摘」一覧に載っている key をそのまま書く"),
+		reason: string().min(1).describe("現在のコードでどう解消しているかを 1〜2 行で")
+	})).default([]).describe("現在のコードで既に解消している未解決指摘。確実なものだけ。無ければ空配列")
+};
+const submissionSchema = object(submitReviewInputShape);
 /** モデルがツールに渡した入力を検証する。 */
-function parseFindings(input) {
-	const result = findingsPayloadSchema.safeParse(input);
+function parseSubmission(input) {
+	const result = submissionSchema.safeParse(input);
 	if (!result.success) return {
 		ok: false,
 		error: result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")
 	};
 	return {
 		ok: true,
-		value: result.data.findings
+		value: {
+			findings: result.data.findings,
+			resolved: result.data.resolved
+		}
 	};
 }
 //#endregion
@@ -25977,7 +25986,7 @@ function buildAgentEnv(source, auth) {
 async function runAgent(input) {
 	let captured = null;
 	let callCount = 0;
-	const submitReview = tool("submit_review", "レビュー結果を報告する。レビューが終わったら必ず 1 回だけ呼び出すこと。", submitReviewInputShape, async (args) => {
+	const submitReview = tool("submit_review", "レビュー結果を報告する。新しく見つけた指摘と、既に解消している未解決指摘を、レビューが終わったら必ず 1 回だけまとめて報告すること。", submitReviewInputShape, async (args) => {
 		callCount += 1;
 		captured = args;
 		return { content: [{
@@ -26036,14 +26045,15 @@ async function runAgent(input) {
 		ok: false,
 		error: `agent did not call ${SUBMIT_TOOL_NAME}`
 	};
-	const parsed = parseFindings(captured);
+	const parsed = parseSubmission(captured);
 	if (!parsed.ok) return {
 		ok: false,
 		error: `invalid tool input: ${parsed.error}`
 	};
 	return {
 		ok: true,
-		findings: parsed.value
+		findings: parsed.value.findings,
+		resolved: parsed.value.resolved
 	};
 }
 //#endregion

@@ -5,7 +5,8 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import {
 	type Finding,
-	parseFindings,
+	parseSubmission,
+	type ResolvedFinding,
 	submitReviewInputShape,
 } from '../core/schema';
 
@@ -57,7 +58,7 @@ export function buildAgentEnv(
 }
 
 export type AgentOutcome =
-	| { ok: true; findings: Finding[] }
+	| { ok: true; findings: Finding[]; resolved: ResolvedFinding[] }
 	| { ok: false; error: string };
 
 export interface RunAgentInput {
@@ -81,7 +82,7 @@ export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 
 	const submitReview = tool(
 		'submit_review',
-		'レビュー結果を報告する。レビューが終わったら必ず 1 回だけ呼び出すこと。',
+		'レビュー結果を報告する。新しく見つけた指摘と、既に解消している未解決指摘を、レビューが終わったら必ず 1 回だけまとめて報告すること。',
 		submitReviewInputShape,
 		async args => {
 			callCount += 1;
@@ -152,9 +153,13 @@ export async function runAgent(input: RunAgentInput): Promise<AgentOutcome> {
 		return { ok: false, error: `agent did not call ${SUBMIT_TOOL_NAME}` };
 	}
 
-	const parsed = parseFindings(captured);
+	const parsed = parseSubmission(captured);
 	if (!parsed.ok) {
 		return { ok: false, error: `invalid tool input: ${parsed.error}` };
 	}
-	return { ok: true, findings: parsed.value };
+	return {
+		ok: true,
+		findings: parsed.value.findings,
+		resolved: parsed.value.resolved,
+	};
 }

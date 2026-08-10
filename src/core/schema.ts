@@ -52,22 +52,54 @@ export const submitReviewInputShape = {
 			}),
 		)
 		.describe('検出した指摘の配列。指摘が無ければ空配列'),
+	resolved: z
+		.array(
+			z.object({
+				key: z
+					.string()
+					.regex(/^[0-9a-f]{12}$/)
+					.describe(
+						'プロンプトの「未解決の指摘」一覧に載っている key をそのまま書く',
+					),
+				reason: z
+					.string()
+					.min(1)
+					.describe('現在のコードでどう解消しているかを 1〜2 行で'),
+			}),
+		)
+		.default([])
+		.describe(
+			'現在のコードで既に解消している未解決指摘。確実なものだけ。無ければ空配列',
+		),
 };
 
-const findingsPayloadSchema = z.object(submitReviewInputShape);
+const submissionSchema = z.object(submitReviewInputShape);
+
+export interface ResolvedFinding {
+	key: string;
+	reason: string;
+}
+
+export interface Submission {
+	findings: Finding[];
+	resolved: ResolvedFinding[];
+}
 
 export type ParseResult<T> =
 	| { ok: true; value: T }
 	| { ok: false; error: string };
 
 /** モデルがツールに渡した入力を検証する。 */
-export function parseFindings(input: unknown): ParseResult<Finding[]> {
-	const result = findingsPayloadSchema.safeParse(input);
+export function parseSubmission(input: unknown): ParseResult<Submission> {
+	const result = submissionSchema.safeParse(input);
 	if (!result.success) {
 		const summary = result.error.issues
 			.map(issue => `${issue.path.join('.')}: ${issue.message}`)
 			.join('; ');
 		return { ok: false, error: summary };
 	}
-	return { ok: true, value: result.data.findings };
+	return {
+		ok: true,
+		value: { findings: result.data.findings, resolved: result.data.resolved },
+	};
 }

@@ -99,7 +99,7 @@ function setup(options: FakeOptions = {}) {
 		github,
 		runAgent: async input => {
 			prompts.push(input.prompt);
-			return outcomes.shift() ?? { ok: true, findings: [] };
+			return outcomes.shift() ?? { ok: true, findings: [], resolved: [] };
 		},
 		readInstructions: async () => options.instructions ?? null,
 		log: () => {},
@@ -143,7 +143,7 @@ describe('runReview', () => {
 
 	test('コメント可能行の指摘をインラインコメントとして投稿する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ line: 2 })] }],
+			outcomes: [{ ok: true, findings: [finding({ line: 2 })], resolved: [] }],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews).toHaveLength(1);
@@ -155,7 +155,9 @@ describe('runReview', () => {
 
 	test('コメント可能行でない指摘をファイル単位コメントとして投稿する', async () => {
 		const { deps, reviews, fileComments } = setup({
-			outcomes: [{ ok: true, findings: [finding({ line: 999 })] }],
+			outcomes: [
+				{ ok: true, findings: [finding({ line: 999 })], resolved: [] },
+			],
 		});
 		await runReview(deps, CONFIG);
 		expect(fileComments).toHaveLength(1);
@@ -165,7 +167,9 @@ describe('runReview', () => {
 
 	test('line が null の指摘もファイル単位コメントとして投稿する', async () => {
 		const { deps, fileComments } = setup({
-			outcomes: [{ ok: true, findings: [finding({ line: null })] }],
+			outcomes: [
+				{ ok: true, findings: [finding({ line: null })], resolved: [] },
+			],
 		});
 		await runReview(deps, CONFIG);
 		expect(fileComments).toHaveLength(1);
@@ -174,7 +178,11 @@ describe('runReview', () => {
 	test('差分に無いファイルへの指摘は破棄して APPROVE しない', async () => {
 		const { deps, reviews, fileComments } = setup({
 			outcomes: [
-				{ ok: true, findings: [finding({ file: 'src/other.ts', line: null })] },
+				{
+					ok: true,
+					findings: [finding({ file: 'src/other.ts', line: null })],
+					resolved: [],
+				},
 			],
 		});
 		await runReview(deps, CONFIG);
@@ -188,7 +196,11 @@ describe('runReview', () => {
 		// 「投稿に失敗した」こと自体が APPROVE を止めることを検証する。
 		const { deps, reviews } = setup({
 			outcomes: [
-				{ ok: true, findings: [finding({ line: 999, severity: 'minor' })] },
+				{
+					ok: true,
+					findings: [finding({ line: 999, severity: 'minor' })],
+					resolved: [],
+				},
 			],
 			fileCommentFails: true,
 		});
@@ -199,7 +211,7 @@ describe('runReview', () => {
 
 	test('Review 本文に指摘の body を複製しない', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ line: 2 })] }],
+			outcomes: [{ ok: true, findings: [finding({ line: 2 })], resolved: [] }],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.body).not.toContain('y が使われていない');
@@ -207,7 +219,13 @@ describe('runReview', () => {
 
 	test('閾値以上の指摘があれば REQUEST_CHANGES で提出する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ severity: 'critical' })] }],
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ severity: 'critical' })],
+					resolved: [],
+				},
+			],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.event).toBe('REQUEST_CHANGES');
@@ -215,7 +233,9 @@ describe('runReview', () => {
 
 	test('閾値未満なら APPROVE で提出する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [finding({ severity: 'minor' })] }],
+			outcomes: [
+				{ ok: true, findings: [finding({ severity: 'minor' })], resolved: [] },
+			],
 		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.event).toBe('APPROVE');
@@ -224,7 +244,13 @@ describe('runReview', () => {
 	test('bot 自身の PR には REQUEST_CHANGES を出さない', async () => {
 		const { deps, reviews } = setup({
 			pr: { authorLogin: 'github-actions[bot]' },
-			outcomes: [{ ok: true, findings: [finding({ severity: 'critical' })] }],
+			outcomes: [
+				{
+					ok: true,
+					findings: [finding({ severity: 'critical' })],
+					resolved: [],
+				},
+			],
 		});
 		await runReview(deps, { ...CONFIG, blockOn: 'critical' });
 		expect(reviews[0]!.event).toBe('COMMENT');
@@ -233,7 +259,7 @@ describe('runReview', () => {
 	test('既存と重複する指摘は再投稿しない', async () => {
 		const f = finding();
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [f] }],
+			outcomes: [{ ok: true, findings: [f], resolved: [] }],
 			existing: [thread({ key: findingKey(f.file, f.title) })],
 		});
 		await runReview(deps, CONFIG);
@@ -243,7 +269,7 @@ describe('runReview', () => {
 	test('resolve 済みの既存指摘でも再投稿しない', async () => {
 		const f = finding();
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [f] }],
+			outcomes: [{ ok: true, findings: [f], resolved: [] }],
 			existing: [
 				thread({ key: findingKey(f.file, f.title), isResolved: true }),
 			],
@@ -255,7 +281,7 @@ describe('runReview', () => {
 	test('outdated な既存指摘でも再投稿しない', async () => {
 		const f = finding();
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [f] }],
+			outcomes: [{ ok: true, findings: [f], resolved: [] }],
 			existing: [
 				thread({ key: findingKey(f.file, f.title), isOutdated: true }),
 			],
@@ -266,7 +292,7 @@ describe('runReview', () => {
 
 	test('未解決の既存指摘があれば REQUEST_CHANGES を維持する', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [] }],
+			outcomes: [{ ok: true, findings: [], resolved: [] }],
 			existing: [thread({ severity: 'critical' })],
 		});
 		await runReview(deps, CONFIG);
@@ -277,7 +303,7 @@ describe('runReview', () => {
 		const { deps, prompts } = setup({
 			outcomes: [
 				{ ok: false, error: 'boom' },
-				{ ok: true, findings: [] },
+				{ ok: true, findings: [], resolved: [] },
 			],
 		});
 		const result = await runReview(deps, CONFIG);
@@ -338,6 +364,7 @@ describe('runReview', () => {
 						finding({ severity: 'major', title: 'b' }),
 						finding({ severity: 'major', title: 'c' }),
 					],
+					resolved: [],
 				},
 			],
 		});
@@ -349,7 +376,7 @@ describe('runReview', () => {
 
 	test('新規指摘も判定の変化も無ければ Review を作らない', async () => {
 		const { deps, reviews } = setup({
-			outcomes: [{ ok: true, findings: [] }],
+			outcomes: [{ ok: true, findings: [], resolved: [] }],
 			existingReviews: [
 				{ id: 1, body: `済\n${REVIEW_MARKER}`, state: 'APPROVED' },
 			],
@@ -360,7 +387,9 @@ describe('runReview', () => {
 	});
 
 	test('指摘が無ければ APPROVE を出す', async () => {
-		const { deps, reviews } = setup({ outcomes: [{ ok: true, findings: [] }] });
+		const { deps, reviews } = setup({
+			outcomes: [{ ok: true, findings: [], resolved: [] }],
+		});
 		await runReview(deps, CONFIG);
 		expect(reviews[0]!.event).toBe('APPROVE');
 	});
